@@ -16,12 +16,15 @@ class SoundManager:
         elif sound_name == "Double Bell":
             QApplication.beep()
 
-            QSoundEffect()
+            # Small delay is intentionally avoided here.
+            # We use two system notifications.
             QApplication.beep()
 
         elif sound_name == "Custom WAV":
             if custom_sound and Path(custom_sound).exists():
-                self.effect.setSource(QUrl.fromLocalFile(custom_sound))
+                self.effect.setSource(
+                    QUrl.fromLocalFile(custom_sound)
+                )
                 self.effect.setVolume(1.0)
                 self.effect.play()
             else:
@@ -29,3 +32,6 @@ class SoundManager:
 
         else:
             QApplication.beep()
+
+    def test(self, sound_name, custom_sound=""):
+        self.play(sound_name, custom_sound)

@@ -5,6 +5,10 @@ class AppSettings:
     def __init__(self):
         self.settings = QSettings("Focus Flow", "Focus Flow")
 
+    # -------------------------
+    # Timer
+    # -------------------------
+
     def get_focus_minutes(self):
         return int(self.settings.value("focus_minutes", 25))
 
@@ -23,6 +27,24 @@ class AppSettings:
     def set_long_break_minutes(self, value):
         self.settings.setValue("long_break_minutes", value)
 
+    def get_sessions_before_long_break(self):
+        return int(
+            self.settings.value(
+                "sessions_before_long_break",
+                4,
+            )
+        )
+
+    def set_sessions_before_long_break(self, value):
+        self.settings.setValue(
+            "sessions_before_long_break",
+            value,
+        )
+
+    # -------------------------
+    # Appearance
+    # -------------------------
+
     def get_theme(self):
         return self.settings.value("theme", "Midnight")
 
@@ -40,6 +62,10 @@ class AppSettings:
 
     def set_background_color(self, value):
         self.settings.setValue("background_color", value)
+
+    # -------------------------
+    # Sound
+    # -------------------------
 
     def get_sound(self):
         return self.settings.value("sound", "System Bell")
