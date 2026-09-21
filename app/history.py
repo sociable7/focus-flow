@@ -1,13 +1,19 @@
-import logging
-import sqlite3
-from datetime import datetime, timedelta
+"""Backwards-compatible history facade over SessionRepository.
 
-LOGGER = logging.getLogger(__name__)
+Group 2 moved every session query into
+``app.persistence.session_repo.SessionRepository``. This class keeps the
+original ``HistoryManager`` API (method names, argument and return
+shapes) so existing UI and tests keep working unchanged. New code should
+use ``SessionRepository`` directly.
+"""
+
+from app.persistence.session_repo import SessionRepository
 
 
 class HistoryManager:
     def __init__(self, database):
         self.database = database
+        self.sessions = SessionRepository(database)
 
     # -------------------------------------------------
     # Add a completed focus session
@@ -18,17 +24,19 @@ class HistoryManager:
         task,
         start_time,
         duration_seconds,
+        end_time=None,
+        planned_seconds=None,
     ):
         """
         Save a completed focus session to the database.
         """
 
-        self.database.add_session(
+        self.sessions.add_focus_session(
             task=task,
             start_time=start_time,
             duration_seconds=duration_seconds,
-            session_type="focus",
-            completed=True,
+            end_time=end_time,
+            planned_seconds=planned_seconds,
         )
 
     # -------------------------------------------------
@@ -48,28 +56,7 @@ class HistoryManager:
             )
         """
 
-        today = datetime.now().date().isoformat()
-
-        cursor = self._cursor()
-        if cursor is None:
-            return []
-
-        cursor.execute(
-            """
-            SELECT
-                task,
-                start_time,
-                duration_seconds
-            FROM sessions
-            WHERE session_type = 'focus'
-            AND completed = 1
-            AND date(start_time) = ?
-            ORDER BY start_time DESC
-            """,
-            (today,),
-        )
-
-        return self._fetchall(cursor, [])
+        return self.sessions.get_today()
 
     # -------------------------------------------------
     # Get this week's focus sessions
@@ -81,32 +68,7 @@ class HistoryManager:
         from the beginning of the current week.
         """
 
-        today = datetime.now().date()
-
-        start_of_week = today - timedelta(
-            days=today.weekday()
-        )
-
-        cursor = self._cursor()
-        if cursor is None:
-            return []
-
-        cursor.execute(
-            """
-            SELECT
-                task,
-                start_time,
-                duration_seconds
-            FROM sessions
-            WHERE session_type = 'focus'
-            AND completed = 1
-            AND date(start_time) >= ?
-            ORDER BY start_time DESC
-            """,
-            (start_of_week.isoformat(),),
-        )
-
-        return self._fetchall(cursor, [])
+        return self.sessions.get_this_week()
 
     # -------------------------------------------------
     # Get total focus time for a specific task
@@ -118,27 +80,7 @@ class HistoryManager:
         for a specific task in seconds.
         """
 
-        cursor = self._cursor()
-        if cursor is None:
-            return 0
-
-        cursor.execute(
-            """
-            SELECT
-                COALESCE(
-                    SUM(duration_seconds),
-                    0
-                )
-            FROM sessions
-            WHERE task = ?
-            AND session_type = 'focus'
-            AND completed = 1
-            """,
-            (task,),
-        )
-
-        result = self._fetchone(cursor, (0,))
-        return result[0]
+        return self.sessions.total_for_task(task)
 
     # -------------------------------------------------
     # Get today's total focus time
@@ -150,29 +92,7 @@ class HistoryManager:
         in seconds.
         """
 
-        today = datetime.now().date().isoformat()
-
-        cursor = self._cursor()
-        if cursor is None:
-            return 0
-
-        cursor.execute(
-            """
-            SELECT
-                COALESCE(
-                    SUM(duration_seconds),
-                    0
-                )
-            FROM sessions
-            WHERE session_type = 'focus'
-            AND completed = 1
-            AND date(start_time) = ?
-            """,
-            (today,),
-        )
-
-        result = self._fetchone(cursor, (0,))
-        return result[0]
+        return self.sessions.today_total()
 
     # -------------------------------------------------
     # Get total focus time for the current week
@@ -184,33 +104,7 @@ class HistoryManager:
         in seconds.
         """
 
-        today = datetime.now().date()
-
-        start_of_week = today - timedelta(
-            days=today.weekday()
-        )
-
-        cursor = self._cursor()
-        if cursor is None:
-            return 0
-
-        cursor.execute(
-            """
-            SELECT
-                COALESCE(
-                    SUM(duration_seconds),
-                    0
-                )
-            FROM sessions
-            WHERE session_type = 'focus'
-            AND completed = 1
-            AND date(start_time) >= ?
-            """,
-            (start_of_week.isoformat(),),
-        )
-
-        result = self._fetchone(cursor, (0,))
-        return result[0]
+        return self.sessions.week_total()
 
     # -------------------------------------------------
     # Get all unique tasks
@@ -222,24 +116,7 @@ class HistoryManager:
         completed focus sessions.
         """
 
-        cursor = self._cursor()
-        if cursor is None:
-            return []
-
-        cursor.execute(
-            """
-            SELECT DISTINCT task
-            FROM sessions
-            WHERE session_type = 'focus'
-            AND completed = 1
-            ORDER BY task COLLATE NOCASE
-            """
-        )
-
-        return [
-            row[0]
-            for row in self._fetchall(cursor, [])
-        ]
+        return self.sessions.tasks()
 
     # -------------------------------------------------
     # Get all completed sessions
@@ -250,43 +127,78 @@ class HistoryManager:
         Return all completed focus sessions.
         """
 
-        cursor = self._cursor()
-        if cursor is None:
-            return []
+        return self.sessions.get_all()
 
-        cursor.execute(
-            """
-            SELECT
-                task,
-                start_time,
-                duration_seconds
-            FROM sessions
-            WHERE session_type = 'focus'
-            AND completed = 1
-            ORDER BY start_time DESC
-            """
-        )
+    # -------------------------------------------------
+    # Get recent sessions (paged)
+    # -------------------------------------------------
 
-        return self._fetchall(cursor, [])
+    def get_recent_sessions(self, limit=50):
+        """
+        Return the most recent completed focus sessions,
+        newest first, capped at ``limit`` rows.
+        """
 
-    def _cursor(self):
-        if not self.database.is_available:
-            LOGGER.error(self.database.error_message)
-            return None
-        return self.database.connection.cursor()
+        return self.sessions.get_recent(limit)
 
-    @staticmethod
-    def _fetchall(cursor, default):
-        try:
-            return cursor.fetchall()
-        except sqlite3.Error:
-            LOGGER.exception("Reading focus history failed")
-            return default
+    # -------------------------------------------------
+    # Get lifetime total focus time
+    # -------------------------------------------------
 
-    @staticmethod
-    def _fetchone(cursor, default):
-        try:
-            return cursor.fetchone() or default
-        except sqlite3.Error:
-            LOGGER.exception("Reading focus history failed")
-            return default
+    def get_total(self):
+        """
+        Return the lifetime total completed focus time
+        in seconds (avoids loading every session row).
+        """
+
+        return self.sessions.lifetime_total()
+
+    # -------------------------------------------------
+    # Get lifetime completed session count
+    # -------------------------------------------------
+
+    def get_session_count(self):
+        """
+        Return the number of completed focus sessions.
+        """
+
+        return self.sessions.session_count()
+
+    # -------------------------------------------------
+    # Get per-day totals for the last N days
+    # -------------------------------------------------
+
+    def get_daily_totals(self, days=7):
+        """
+        Return ``[(date_iso, seconds), ...]`` for the last ``days``
+        calendar days including today, oldest first. Days without
+        sessions report 0 seconds.
+        """
+
+        return self.sessions.daily_series(days)
+
+    # -------------------------------------------------
+    # Get current daily streak
+    # -------------------------------------------------
+
+    def get_day_streak(self):
+        """
+        Return the number of consecutive calendar days with at
+        least one completed focus session, counting back from
+        today (a missing today still counts when yesterday
+        completed — the streak is only broken by a full miss).
+        """
+
+        return self.sessions.day_streak()
+
+    # -------------------------------------------------
+    # Get per-task breakdown
+    # -------------------------------------------------
+
+    def get_task_breakdown(self, limit=5):
+        """
+        Return ``[(task, seconds, sessions), ...]`` ordered by
+        total focus time descending, capped at ``limit`` tasks.
+        """
+
+        return self.sessions.per_task(limit)

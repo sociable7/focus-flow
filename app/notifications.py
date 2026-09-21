@@ -18,11 +18,14 @@ class NotificationManager:
             message (str): Notification body.
         """
 
-        script = f'''
-        display notification "{self._escape(title)}"
-        with title "{self._escape(self.app_name)}"
-        subtitle "{self._escape(message)}"
-        '''
+        # Single-line script: osascript -e fails to compile a single
+        # -e argument containing literal newlines + leading whitespace
+        # (-2741), so the whole command must stay on one line.
+        script = (
+            f'display notification "{self._escape(title)}"'
+            f' with title "{self._escape(self.app_name)}"'
+            f' subtitle "{self._escape(message)}"'
+        )
 
         try:
             subprocess.run(

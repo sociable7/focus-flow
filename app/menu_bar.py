@@ -79,4 +79,24 @@ class MenuBarManager:
 
         self.tray.setContextMenu(menu)
 
+        self.start_action = start_action
+        self.compact_action = compact_action
+
         self.tray.show()
+
+    # =====================================================
+    # Tray service (Group 4): reflect live timer state
+    # =====================================================
+
+    def sync_state(self, mode_text="", remaining_text="", running=False):
+        """Update tooltip and Start/Pause label; never raises."""
+        try:
+            state = "Running" if running else "Paused"
+            detail = f"{mode_text} {remaining_text}".strip()
+            if detail:
+                self.tray.setToolTip(f"Focus Flow — {detail} ({state})")
+            else:
+                self.tray.setToolTip(f"Focus Flow ({state})")
+            self.start_action.setText("Pause" if running else "Start")
+        except Exception:
+            pass

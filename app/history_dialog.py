@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from app.themes import get_theme
+from app.services.theme_service import resolve as resolve_theme
 
 
 class HistoryDialog(QDialog):
@@ -52,6 +52,34 @@ class HistoryDialog(QDialog):
             summary.addWidget(value)
         layout.addLayout(summary)
 
+        extras = QHBoxLayout()
+        extras.setSpacing(12)
+        self.streak_value = self._summary_value("Day Streak")
+        self.sessions_value = self._summary_value("Sessions")
+        self.top_task_value = self._summary_value("Top Task")
+        for value in (
+            self.streak_value,
+            self.sessions_value,
+            self.top_task_value,
+        ):
+            extras.addWidget(value)
+        layout.addLayout(extras)
+
+        week_title = QLabel("Last 7 days")
+        week_title.setObjectName("historySubtitle")
+        layout.addWidget(week_title)
+
+        week_strip = QHBoxLayout()
+        week_strip.setSpacing(8)
+        self.day_labels = []
+        for _ in range(7):
+            label = QLabel()
+            label.setObjectName("historyDay")
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            week_strip.addWidget(label)
+            self.day_labels.append(label)
+        layout.addLayout(week_strip)
+
         self.sessions_table = QTableWidget(0, 3)
         self.sessions_table.setObjectName("historyTable")
         self.sessions_table.setHorizontalHeaderLabels(
@@ -84,14 +112,37 @@ class HistoryDialog(QDialog):
         return label
 
     def refresh(self):
-        sessions = self.history.get_all()
+        sessions = self.history.get_recent_sessions(50)
         today = self.history.get_today_total()
         week = self.history.get_this_week_total()
-        total = sum(duration for _, _, duration in sessions)
+        total = self.history.get_total()
+        streak = self.history.get_day_streak()
+        count = self.history.get_session_count()
+        daily = self.history.get_daily_totals(7)
+        breakdown = self.history.get_task_breakdown(1)
 
         self._set_summary(self.today_value, "Today", today)
         self._set_summary(self.week_value, "This Week", week)
         self._set_summary(self.total_value, "Total Focus Time", total)
+        self.streak_value.setText(
+            f"Day Streak\n{streak} day{'s' if streak != 1 else ''}"
+        )
+        self.sessions_value.setText(
+            f"Sessions\n{count} session{'s' if count != 1 else ''}"
+        )
+        if breakdown:
+            task, seconds, _ = breakdown[0]
+            self.top_task_value.setText(
+                f"Top Task\n{task} • {self._format_duration(seconds)}"
+            )
+        else:
+            self.top_task_value.setText("Top Task\n—")
+
+        for label, (day, seconds) in zip(self.day_labels, daily):
+            label.setText(
+                f"{self._format_weekday(day)}\n"
+                f"{self._format_duration(seconds)}"
+            )
 
         self.sessions_table.setRowCount(0)
         for task, start_time, duration in sessions[:50]:
@@ -128,10 +179,22 @@ class HistoryDialog(QDialog):
         except (TypeError, ValueError):
             return str(value)
 
+    @staticmethod
+    def _format_weekday(day_iso):
+        try:
+            return datetime.fromisoformat(day_iso).strftime("%a")
+        except (TypeError, ValueError):
+            return str(day_iso)
+
     def apply_theme(self):
-        theme = get_theme(self.settings.get_theme())
-        background = self.settings.get_background_color() or theme["background"]
-        accent = self.settings.get_accent_color() or theme["accent"]
+        resolved = resolve_theme(
+            self.settings.get_theme(),
+            self.settings.get_accent_color(),
+            self.settings.get_background_color(),
+        )
+        theme = resolved["tokens"]
+        background = resolved["background"]
+        accent = resolved["accent"]
         self.setStyleSheet(
             f"""
             QDialog {{ background: {background}; color: {theme["text"]}; }}
@@ -140,6 +203,11 @@ class HistoryDialog(QDialog):
             QLabel#historySummary {{
                 background: {theme["surface"]}; border: 1px solid {theme["border"]};
                 border-radius: 12px; padding: 14px; font-weight: 600;
+            }}
+            QLabel#historyDay {{
+                background: {theme["surface"]}; border: 1px solid {theme["border"]};
+                border-radius: 10px; padding: 8px 4px; font-weight: 600;
+                color: {theme["secondary_text"]};
             }}
             QTableWidget#historyTable {{
                 background: {theme["surface"]}; border: 1px solid {theme["border"]};
