@@ -19,16 +19,16 @@ Focus Flow is a Pomodoro productivity desktop application for macOS, built with 
 
 ### History and statistics
 
-- Local SQLite database at `~/Library/Application Support/Focus Flow/focus_flow.db` (schema v2, indexed over session time/task)
+- Local SQLite database at `~/Library/Application Support/Focus Flow/focus_flow.db` (schema v3, indexed over session time/task)
 - History dialog with six summaries — Today, This Week, Total Focus Time, Day Streak, Sessions, Top Task — plus a last-7-days strip and a session table (most recent 50 sessions)
 - Lifetime totals and session counts come from SQL aggregates; the table reads a single capped query
 - Only completed focus sessions are recorded and displayed
 
 ### Daily goal
 
-- Configurable daily focus target (15–1440 min, default 120), stored per day in the SQLite `daily_goals` table (schema v2)
+- Configurable daily focus target (15–1440 min, default 120), stored per day in the SQLite `daily_goals` table (schema v3)
 - Main-window progress label shows today's minutes against the target
-- Pre-Group-2 `QSettings` values are imported into the database once on startup; `QSettings` is kept as a legacy mirror for backward compatibility
+- Values from the earlier `QSettings`-based storage are imported into the database on startup; `QSettings` is kept as a legacy mirror for backward compatibility
 
 ### Appearance
 
@@ -85,18 +85,19 @@ focus-flow/
 ├── main.py                  # Entry point: creates QApplication and MainWindow
 ├── requirements.txt         # Pinned PySide6 dependencies
 ├── app/
-│   ├── main_window.py       # MainWindow: timer state machine, main UI, dialogs wiring
+│   ├── main_window.py       # MainWindow: wires services, views, dialogs, and menus
 │   ├── settings_dialog.py   # SettingsDialog: timer/goal/appearance/sound/notification settings
-│   ├── timer.py             # PomodoroTimer: 1-second countdown, tick/finished signals
-│   ├── database.py          # SQLite persistence (sessions, goals, daily_goals tables; schema v2)
+│   ├── timer.py             # PomodoroTimer: backwards-compatible alias of core Clock
+│   ├── database.py          # SQLite persistence (sessions, goals, daily_goals tables; schema v3)
 │   ├── history.py           # HistoryManager: today/week/total/count/streak/daily-totals/task-breakdown queries
 │   ├── history_dialog.py    # HistoryDialog: summaries + 7-day strip + top task + recent-sessions table
 │   ├── goals.py             # GoalManager: canonical per-day goals in daily_goals (validated 15–1440)
-│   ├── core/                # Clock, SessionEngine, session enums
+│   ├── core/                # Clock (countdown engine), SessionEngine (phase state machine), session enums
 │   ├── services/            # SettingsStore, GoalService, theme_service,
 │   │                         # SoundService, NotificationService
-│   ├── persistence/         # Schema migrations (v1 → v2: daily_goals + session indexes)
-│   ├── settings.py          # AppSettings: typed QSettings access with defaults
+│   ├── persistence/         # Schema migrations (v1 → v3) and SessionRepository queries
+│   ├── ui/                  # Focus, history, stats, and goals views plus sidebar and shared components
+│   ├── settings.py          # AppSettings: backwards-compatible alias of SettingsStore
 │   ├── themes.py            # Theme palettes and lookup
 │   ├── sounds.py            # SoundManager: cached QSoundEffect playback
 │   ├── notifications.py     # macOS AppleScript notifications (sync engine)
@@ -106,19 +107,22 @@ focus-flow/
 │   └── menu_bar.py          # Status-bar (tray) menu with live state sync
 ├── packaging/               # .app prep: Info.plist template + build notes
 ├── .github/workflows/ci.yml # CI: compileall + headless unittest on macOS
-├── widgets/                 # Reserved for goals/history/stats views (currently empty stubs)
+├── widgets/                 # Legacy empty stubs (unused; views live in app/ui/)
 ├── assets/
 │   ├── icons/               # settings.svg and related artwork
 │   └── sounds/              # system_bell.wav fallback sound
 └── tests/
     ├── test_regressions.py  # 8 regression tests (timer, transitions, shortcuts, sound, DB, history)
-    ├── test_foundation.py   # 19 foundation tests (clock, engine, settings, migrations v1, themes)
-    └── test_goals.py        # 21 goal tests (v2 migration, GoalManager, GoalService, goal UI)
+    ├── test_foundation.py   # 19 foundation tests (clock, engine, settings, migrations, themes)
+    ├── test_goals.py        # 21 goal tests (migration, GoalManager, GoalService, goal UI)
     ├── test_history.py      # 14 analytics tests (totals, daily buckets, streaks, breakdown, dialog)
-    ├── test_session_repo.py # v3 migration + SessionRepository query tests
-    └── test_shell.py        # shell tests (navigation, banner, settings, history/goals/stats views)
-    └── test_group4.py       # 17 Group 4 tests (async services, menus, mini, System theme, streak)
+    ├── test_session_repo.py # 10 SessionRepository query tests (incl. v3 migration)
+    ├── test_shell.py        # 18 shell tests (navigation, banner, settings, history/goals/stats views)
+    ├── test_group4.py       # 20 tests (async services, menus, mini timer, System theme, streak)
+    └── test_mini_interactions.py # 17 mini-timer interaction tests (task gate, skip, toggle routing)
 ```
+
+The layered design keeps timekeeping (`core/`), persistence (`database.py`, `persistence/`), cross-cutting services (`services/`), and presentation (`ui/`, dialogs, menus) separate. `MainWindow` composes these pieces rather than implementing them; `timer.py` and `settings.py` remain as thin compatibility aliases so existing imports keep working.
 
 ## Requirements
 
@@ -155,15 +159,23 @@ All GUI tests require `QT_QPA_PLATFORM=offscreen` when no display is available. 
 
 ## Current project status
 
-Working local application, under active development. Known prototype-grade areas, unchanged by design in this revision:
+Working local application, under active development. Known limitations:
 
 - No `.app` bundle, installer, code signing, or sandbox/entitlements configuration — run from source only (see `packaging/` for preparation notes and an `Info.plist` template).
 - Notifications are dispatched on a worker thread but still go through `osascript`; there is no `UNUserNotificationCenter` integration yet.
 - The legacy SQLite `goals` table is retained read-only for migration reference; the live daily-goal store is `daily_goals` via `GoalManager`/`GoalService`.
-- `widgets/` contains empty placeholder modules reserved for future views.
+- `widgets/` contains empty legacy placeholder modules that are not used; the active views live in `app/ui/`.
 - CI runs `compileall` plus the headless `unittest` suite (`.github/workflows/ci.yml`); no lint or typecheck configuration.
 
 ## Roadmap (planned, not implemented)
 
 - Application packaging: `.app` bundle build, signing/notarization, and sandbox-compatible data and notification paths (prep work in `packaging/`)
 - Modern macOS notifications with permission handling and actions (`UNUserNotificationCenter` to replace `osascript`)
+
+## License
+
+Focus Flow is proprietary software under a custom source-available license. See [LICENSE](LICENSE) for details.
+
+## Security
+
+To report a security vulnerability, see [SECURITY.md](SECURITY.md). Please report privately and do not open a public issue before it has been addressed.
