@@ -1,8 +1,10 @@
+from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QEvent, Qt, QSize, QTimer
 from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QColorDialog,
     QDialog,
@@ -11,38 +13,68 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
+from app.database import Database, DatabaseError
+from app.floating_timer import FloatingTimer
+from app.goals import GoalManager
+from app.history import HistoryManager
+from app.history_dialog import HistoryDialog
+from app.menu_bar import MenuBarManager
+from app.notifications import NotificationManager
 from app.settings import AppSettings
+from app.shortcuts import ShortcutManager
 from app.sounds import SoundManager
 from app.themes import THEMES, get_theme
 from app.timer import PomodoroTimer
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings, parent=None):
+    def __init__(
+        self,
+        settings,
+        sound_manager,
+        parent=None,
+    ):
         super().__init__(parent)
 
         self.settings = settings
+        self.sound_manager = sound_manager
 
-        # Temporary values.
-        # Nothing is written permanently until Save is clicked.
-        self.selected_accent = settings.get_accent_color()
-        self.selected_background = settings.get_background_color()
-        self.selected_custom_sound = settings.get_custom_sound()
+        self.selected_accent = (
+            settings.get_accent_color()
+        )
 
-        self.setWindowTitle("Focus Flow Settings")
-        self.setMinimumSize(520, 560)
-        self.resize(560, 720)
+        self.selected_background = (
+            settings.get_background_color()
+        )
+
+        self.selected_custom_sound = (
+            settings.get_custom_sound()
+        )
+
+        self.setWindowTitle(
+            "Focus Flow Settings"
+        )
+
+        self.setMinimumSize(
+            520,
+            560,
+        )
+
+        self.resize(
+            560,
+            720,
+        )
 
         self.build_ui()
         self.apply_theme()
@@ -53,7 +85,14 @@ class SettingsDialog(QDialog):
 
     def build_ui(self):
         outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        outer_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+
         outer_layout.setSpacing(0)
 
         # -----------------------------------------------------
@@ -61,19 +100,35 @@ class SettingsDialog(QDialog):
         # -----------------------------------------------------
 
         header = QFrame()
-        header.setObjectName("settingsHeader")
+        header.setObjectName(
+            "settingsHeader"
+        )
 
-        header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(28, 24, 28, 22)
+        header_layout = QVBoxLayout(
+            header
+        )
+
+        header_layout.setContentsMargins(
+            28,
+            24,
+            28,
+            22,
+        )
+
         header_layout.setSpacing(5)
 
         title = QLabel("Settings")
-        title.setObjectName("settingsTitle")
+        title.setObjectName(
+            "settingsTitle"
+        )
 
         subtitle = QLabel(
             "Customize your focus experience."
         )
-        subtitle.setObjectName("settingsSubtitle")
+
+        subtitle.setObjectName(
+            "settingsSubtitle"
+        )
 
         header_layout.addWidget(title)
         header_layout.addWidget(subtitle)
@@ -81,18 +136,26 @@ class SettingsDialog(QDialog):
         outer_layout.addWidget(header)
 
         # -----------------------------------------------------
-        # Scroll area
+        # Scroll
         # -----------------------------------------------------
 
         scroll = QScrollArea()
+
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        scroll.setFrameShape(
+            QFrame.Shape.NoFrame
+        )
+
         scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
 
         content = QWidget()
-        content_layout = QVBoxLayout(content)
+
+        content_layout = QVBoxLayout(
+            content
+        )
 
         content_layout.setContentsMargins(
             28,
@@ -103,7 +166,10 @@ class SettingsDialog(QDialog):
 
         content_layout.setSpacing(18)
 
+        # =====================================================
         # TIMER
+        # =====================================================
+
         timer_section = self.create_section(
             "Timer",
             "Set how long you want to work and rest.",
@@ -111,32 +177,40 @@ class SettingsDialog(QDialog):
 
         timer_layout = timer_section.layout()
 
-        self.focus_spin = self.create_spinbox(
-            self.settings.get_focus_minutes(),
-            1,
-            180,
-            " min",
+        self.focus_spin = (
+            self.create_spinbox(
+                self.settings.get_focus_minutes(),
+                1,
+                180,
+                " min",
+            )
         )
 
-        self.short_break_spin = self.create_spinbox(
-            self.settings.get_short_break_minutes(),
-            1,
-            60,
-            " min",
+        self.short_break_spin = (
+            self.create_spinbox(
+                self.settings.get_short_break_minutes(),
+                1,
+                60,
+                " min",
+            )
         )
 
-        self.long_break_spin = self.create_spinbox(
-            self.settings.get_long_break_minutes(),
-            1,
-            120,
-            " min",
+        self.long_break_spin = (
+            self.create_spinbox(
+                self.settings.get_long_break_minutes(),
+                1,
+                120,
+                " min",
+            )
         )
 
-        self.sessions_spin = self.create_spinbox(
-            self.settings.get_sessions_before_long_break(),
-            1,
-            12,
-            " sessions",
+        self.sessions_spin = (
+            self.create_spinbox(
+                self.settings.get_sessions_before_long_break(),
+                1,
+                12,
+                " sessions",
+            )
         )
 
         timer_layout.addWidget(
@@ -171,18 +245,61 @@ class SettingsDialog(QDialog):
             )
         )
 
-        content_layout.addWidget(timer_section)
+        content_layout.addWidget(
+            timer_section
+        )
 
+        # =====================================================
+        # GOAL
+        # =====================================================
+
+        goal_section = self.create_section(
+            "Daily Goal",
+            "Set a target for your total daily focus time.",
+        )
+
+        goal_layout = goal_section.layout()
+
+        self.goal_spin = (
+            self.create_spinbox(
+                self.settings.get_daily_goal_minutes(),
+                15,
+                1440,
+                " min",
+            )
+        )
+
+        goal_layout.addWidget(
+            self.create_setting_row(
+                "Daily focus goal",
+                "Your target amount of focused work each day.",
+                self.goal_spin,
+            )
+        )
+
+        content_layout.addWidget(
+            goal_section
+        )
+
+        # =====================================================
         # APPEARANCE
+        # =====================================================
+
         appearance_section = self.create_section(
             "Appearance",
             "Choose a design or personalize its colors.",
         )
 
-        appearance_layout = appearance_section.layout()
+        appearance_layout = (
+            appearance_section.layout()
+        )
 
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(THEMES.keys())
+
+        self.theme_combo.addItems(
+            THEMES.keys()
+        )
+
         self.theme_combo.setCurrentText(
             self.settings.get_theme()
         )
@@ -190,33 +307,52 @@ class SettingsDialog(QDialog):
         appearance_layout.addWidget(
             self.create_setting_row(
                 "Design",
-                "Choose one of the four Focus Flow designs.",
+                "Choose one of the Focus Flow designs.",
                 self.theme_combo,
             )
         )
 
+        # -----------------------------------------------------
         # Accent
+        # -----------------------------------------------------
+
         accent_row = QHBoxLayout()
         accent_row.setSpacing(12)
 
         accent_text = QVBoxLayout()
         accent_text.setSpacing(2)
 
-        accent_title = QLabel("Accent color")
-        accent_title.setObjectName("settingTitle")
+        accent_title = QLabel(
+            "Accent color"
+        )
+
+        accent_title.setObjectName(
+            "settingTitle"
+        )
 
         accent_description = QLabel(
             "Color used for buttons and highlights."
         )
+
         accent_description.setObjectName(
             "settingDescription"
         )
 
-        accent_text.addWidget(accent_title)
-        accent_text.addWidget(accent_description)
+        accent_text.addWidget(
+            accent_title
+        )
+
+        accent_text.addWidget(
+            accent_description
+        )
 
         self.accent_button = QPushButton()
-        self.accent_button.setFixedSize(100, 38)
+
+        self.accent_button.setFixedSize(
+            100,
+            38,
+        )
+
         self.accent_button.setCursor(
             Qt.CursorShape.PointingHandCursor
         )
@@ -226,40 +362,65 @@ class SettingsDialog(QDialog):
             self.selected_accent,
         )
 
-        accent_row.addLayout(accent_text)
-        accent_row.addStretch()
-        accent_row.addWidget(self.accent_button)
+        accent_row.addLayout(
+            accent_text
+        )
 
-        appearance_layout.addLayout(accent_row)
+        accent_row.addStretch()
+
+        accent_row.addWidget(
+            self.accent_button
+        )
+
+        appearance_layout.addLayout(
+            accent_row
+        )
 
         self.accent_button.clicked.connect(
             self.choose_accent
         )
 
+        # -----------------------------------------------------
         # Background
+        # -----------------------------------------------------
+
         background_row = QHBoxLayout()
         background_row.setSpacing(12)
 
         background_text = QVBoxLayout()
         background_text.setSpacing(2)
 
-        background_title = QLabel("Background color")
-        background_title.setObjectName("settingTitle")
+        background_title = QLabel(
+            "Background color"
+        )
+
+        background_title.setObjectName(
+            "settingTitle"
+        )
 
         background_description = QLabel(
             "Override the selected design's background."
         )
+
         background_description.setObjectName(
             "settingDescription"
         )
 
-        background_text.addWidget(background_title)
+        background_text.addWidget(
+            background_title
+        )
+
         background_text.addWidget(
             background_description
         )
 
         self.background_button = QPushButton()
-        self.background_button.setFixedSize(100, 38)
+
+        self.background_button.setFixedSize(
+            100,
+            38,
+        )
+
         self.background_button.setCursor(
             Qt.CursorShape.PointingHandCursor
         )
@@ -269,17 +430,28 @@ class SettingsDialog(QDialog):
             self.selected_background,
         )
 
-        background_row.addLayout(background_text)
+        background_row.addLayout(
+            background_text
+        )
+
         background_row.addStretch()
+
         background_row.addWidget(
             self.background_button
         )
 
-        appearance_layout.addLayout(background_row)
+        appearance_layout.addLayout(
+            background_row
+        )
+
+        self.background_button.clicked.connect(
+            self.choose_background
+        )
 
         reset_colors_button = QPushButton(
             "Use Design Colors"
         )
+
         reset_colors_button.setObjectName(
             "secondaryAction"
         )
@@ -300,7 +472,10 @@ class SettingsDialog(QDialog):
             appearance_section
         )
 
+        # =====================================================
         # SOUND
+        # =====================================================
+
         sound_section = self.create_section(
             "Sound",
             "Choose what Focus Flow plays when a timer finishes.",
@@ -309,6 +484,7 @@ class SettingsDialog(QDialog):
         sound_layout = sound_section.layout()
 
         self.sound_combo = QComboBox()
+
         self.sound_combo.addItems(
             [
                 "System Bell",
@@ -356,9 +532,12 @@ class SettingsDialog(QDialog):
             self.test_sound_button
         )
 
-        sound_layout.addLayout(sound_buttons)
+        sound_layout.addLayout(
+            sound_buttons
+        )
 
         self.custom_sound_label = QLabel()
+
         self.custom_sound_label.setObjectName(
             "fileLabel"
         )
@@ -377,22 +556,81 @@ class SettingsDialog(QDialog):
             self.test_sound
         )
 
-        content_layout.addWidget(sound_section)
+        content_layout.addWidget(
+            sound_section
+        )
 
+        # =====================================================
+        # NOTIFICATIONS
+        # =====================================================
+
+        notifications_section = self.create_section(
+            "Notifications",
+            "Control desktop notifications when sessions finish.",
+        )
+
+        notifications_layout = (
+            notifications_section.layout()
+        )
+
+        self.notifications_combo = QComboBox()
+
+        self.notifications_combo.addItems(
+            [
+                "Enabled",
+                "Disabled",
+            ]
+        )
+
+        current_notification = (
+            "Enabled"
+            if self.settings.get_notifications_enabled()
+            else "Disabled"
+        )
+
+        self.notifications_combo.setCurrentText(
+            current_notification
+        )
+
+        notifications_layout.addWidget(
+            self.create_setting_row(
+                "Desktop notifications",
+                "Show a macOS notification when a timer finishes.",
+                self.notifications_combo,
+            )
+        )
+
+        content_layout.addWidget(
+            notifications_section
+        )
+
+        # -----------------------------------------------------
         # Bottom spacing
+        # -----------------------------------------------------
+
         content_layout.addStretch()
 
         scroll.setWidget(content)
-        outer_layout.addWidget(scroll, 1)
 
-        # -----------------------------------------------------
-        # Bottom buttons
-        # -----------------------------------------------------
+        outer_layout.addWidget(
+            scroll,
+            1,
+        )
+
+        # =====================================================
+        # Footer
+        # =====================================================
 
         footer = QFrame()
-        footer.setObjectName("settingsFooter")
 
-        footer_layout = QHBoxLayout(footer)
+        footer.setObjectName(
+            "settingsFooter"
+        )
+
+        footer_layout = QHBoxLayout(
+            footer
+        )
+
         footer_layout.setContentsMargins(
             28,
             16,
@@ -409,24 +647,44 @@ class SettingsDialog(QDialog):
 
         buttons.button(
             QDialogButtonBox.StandardButton.Save
-        ).setObjectName("saveButton")
+        ).setObjectName(
+            "saveButton"
+        )
 
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(
+            self.accept
+        )
 
-        footer_layout.addWidget(buttons)
+        buttons.rejected.connect(
+            self.reject
+        )
 
-        outer_layout.addWidget(footer)
+        footer_layout.addWidget(
+            buttons
+        )
+
+        outer_layout.addWidget(
+            footer
+        )
 
     # =========================================================
-    # Section helpers
+    # Helpers
     # =========================================================
 
-    def create_section(self, title, description):
+    def create_section(
+        self,
+        title,
+        description,
+    ):
         section = QFrame()
-        section.setObjectName("settingsSection")
 
-        layout = QVBoxLayout(section)
+        section.setObjectName(
+            "settingsSection"
+        )
+
+        layout = QVBoxLayout(
+            section
+        )
 
         layout.setContentsMargins(
             20,
@@ -438,17 +696,26 @@ class SettingsDialog(QDialog):
         layout.setSpacing(16)
 
         title_label = QLabel(title)
+
         title_label.setObjectName(
             "sectionTitle"
         )
 
-        description_label = QLabel(description)
+        description_label = QLabel(
+            description
+        )
+
         description_label.setObjectName(
             "sectionDescription"
         )
 
-        layout.addWidget(title_label)
-        layout.addWidget(description_label)
+        layout.addWidget(
+            title_label
+        )
+
+        layout.addWidget(
+            description_label
+        )
 
         return section
 
@@ -459,35 +726,52 @@ class SettingsDialog(QDialog):
         widget,
     ):
         row = QHBoxLayout()
+
         row.setSpacing(15)
 
         text_layout = QVBoxLayout()
+
         text_layout.setSpacing(2)
 
         title_label = QLabel(title)
+
         title_label.setObjectName(
             "settingTitle"
         )
 
-        description_label = QLabel(description)
+        description_label = QLabel(
+            description
+        )
+
         description_label.setObjectName(
             "settingDescription"
         )
 
-        description_label.setWordWrap(True)
+        description_label.setWordWrap(
+            True
+        )
 
-        text_layout.addWidget(title_label)
+        text_layout.addWidget(
+            title_label
+        )
+
         text_layout.addWidget(
             description_label
         )
 
-        row.addLayout(text_layout, 1)
+        row.addLayout(
+            text_layout,
+            1,
+        )
 
-        widget.setMinimumWidth(135)
+        widget.setMinimumWidth(
+            135
+        )
 
         row.addWidget(widget)
 
         container = QWidget()
+
         container.setLayout(row)
 
         return container
@@ -507,6 +791,7 @@ class SettingsDialog(QDialog):
         )
 
         spin.setValue(value)
+
         spin.setSuffix(suffix)
 
         return spin
@@ -530,7 +815,9 @@ class SettingsDialog(QDialog):
         )
 
         if color.isValid():
-            self.selected_accent = color.name()
+            self.selected_accent = (
+                color.name()
+            )
 
             self.update_color_button(
                 self.accent_button,
@@ -552,7 +839,9 @@ class SettingsDialog(QDialog):
         )
 
         if color.isValid():
-            self.selected_background = color.name()
+            self.selected_background = (
+                color.name()
+            )
 
             self.update_color_button(
                 self.background_button,
@@ -587,9 +876,10 @@ class SettingsDialog(QDialog):
             button.setStyleSheet("")
             return
 
-        button.setText(color.upper())
+        button.setText(
+            color.upper()
+        )
 
-        # Determine readable text color.
         qcolor = QColor(color)
 
         brightness = (
@@ -617,18 +907,21 @@ class SettingsDialog(QDialog):
             """
         )
 
-    def theme_preview_changed(self, theme_name):
-        if not self.selected_accent:
-            theme = get_theme(theme_name)
+    def theme_preview_changed(
+        self,
+        theme_name,
+    ):
+        theme = get_theme(
+            theme_name
+        )
 
+        if not self.selected_accent:
             self.update_color_button(
                 self.accent_button,
                 theme["accent"],
             )
 
         if not self.selected_background:
-            theme = get_theme(theme_name)
-
             self.update_color_button(
                 self.background_button,
                 theme["background"],
@@ -641,18 +934,24 @@ class SettingsDialog(QDialog):
     # =========================================================
 
     def choose_sound(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Choose WAV File",
-            "",
-            "WAV files (*.wav)",
+        file_path, _ = (
+            QFileDialog.getOpenFileName(
+                self,
+                "Choose WAV File",
+                "",
+                "WAV files (*.wav)",
+            )
         )
 
         if file_path:
-            self.selected_custom_sound = file_path
+            self.selected_custom_sound = (
+                file_path
+            )
+
             self.sound_combo.setCurrentText(
                 "Custom WAV"
             )
+
             self.update_custom_sound_label()
 
     def update_custom_sound_label(self):
@@ -670,11 +969,7 @@ class SettingsDialog(QDialog):
             )
 
     def test_sound(self):
-        from app.sounds import SoundManager
-
-        manager = SoundManager()
-
-        manager.play(
+        self.sound_manager.play(
             self.sound_combo.currentText(),
             self.selected_custom_sound,
         )
@@ -700,6 +995,10 @@ class SettingsDialog(QDialog):
             self.sessions_spin.value()
         )
 
+        self.settings.set_daily_goal_minutes(
+            self.goal_spin.value()
+        )
+
         self.settings.set_theme(
             self.theme_combo.currentText()
         )
@@ -720,6 +1019,11 @@ class SettingsDialog(QDialog):
             self.selected_custom_sound
         )
 
+        self.settings.set_notifications_enabled(
+            self.notifications_combo.currentText()
+            == "Enabled"
+        )
+
     # =========================================================
     # Theme
     # =========================================================
@@ -727,7 +1031,10 @@ class SettingsDialog(QDialog):
     def apply_theme(self):
         theme = get_theme(
             self.theme_combo.currentText()
-            if hasattr(self, "theme_combo")
+            if hasattr(
+                self,
+                "theme_combo",
+            )
             else self.settings.get_theme()
         )
 
@@ -745,7 +1052,8 @@ class SettingsDialog(QDialog):
             QWidget {{
                 color: {theme["text"]};
                 font-family:
-                    "SF Pro Display",
+                    -apple-system,
+                    BlinkMacSystemFont,
                     "Helvetica Neue",
                     sans-serif;
             }}
@@ -843,10 +1151,6 @@ class SettingsDialog(QDialog):
                 font-weight: 700;
             }}
 
-            QPushButton#saveButton:hover {{
-                background: {theme["accent"]};
-            }}
-
             QScrollBar:vertical {{
                 background: transparent;
                 width: 9px;
@@ -876,25 +1180,102 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.settings = AppSettings()
-        self.timer = PomodoroTimer()
-        self.sound_manager = SoundManager()
+        # =====================================================
+        # Core services
+        # =====================================================
 
-        # Focus / Short Break / Long Break
+        self.settings = AppSettings()
+
+        self.timer = PomodoroTimer()
+
+        self.sound_manager = SoundManager(self)
+
+        self.database = Database()
+
+        self.history = HistoryManager(
+            self.database
+        )
+
+        self.goals = GoalManager(
+            self.database
+        )
+
+        self.notifications = (
+            NotificationManager()
+        )
+
+        # =====================================================
+        # Timer state
+        # =====================================================
+
         self.mode = "Focus"
 
-        # Current focus session number.
         self.session_number = 1
 
-        self.setWindowTitle("Focus Flow")
-        self.setMinimumSize(540, 650)
-        self.resize(600, 740)
+        self.current_task = ""
+
+        self.focus_start_time = None
+
+        # =====================================================
+        # Window
+        # =====================================================
+
+        self.setWindowTitle(
+            "Focus Flow"
+        )
+
+        self.setMinimumSize(
+            560,
+            700,
+        )
+
+        self.resize(
+            620,
+            800,
+        )
+
+        # =====================================================
+        # Build application
+        # =====================================================
 
         self.build_ui()
+
         self.connect_signals()
+
         self.load_initial_timer()
+
         self.apply_theme()
+
         self.update_buttons()
+
+        # =====================================================
+        # Additional controllers
+        # =====================================================
+
+        self.floating_timer = (
+            FloatingTimer(
+                self.timer,
+                toggle_callback=self.toggle_timer,
+            )
+        )
+
+        self.floating_timer.close_requested.connect(
+            self.hide_floating_timer
+        )
+
+        self.apply_theme()
+
+        self.shortcut_manager = (
+            ShortcutManager(self)
+        )
+
+        self.menu_bar_manager = (
+            MenuBarManager(self)
+        )
+
+        # The compact timer is an overlay shown only while Focus Flow is
+        # inactive; it starts hidden while the main window has focus.
+        self.hide_floating_timer()
 
     # =========================================================
     # UI
@@ -902,9 +1283,14 @@ class MainWindow(QMainWindow):
 
     def build_ui(self):
         central = QWidget()
-        self.setCentralWidget(central)
 
-        self.main_layout = QVBoxLayout(central)
+        self.setCentralWidget(
+            central
+        )
+
+        self.main_layout = QVBoxLayout(
+            central
+        )
 
         self.main_layout.setContentsMargins(
             42,
@@ -913,7 +1299,9 @@ class MainWindow(QMainWindow):
             32,
         )
 
-        self.main_layout.setSpacing(18)
+        self.main_layout.setSpacing(
+            18
+        )
 
         # -----------------------------------------------------
         # Header
@@ -922,24 +1310,53 @@ class MainWindow(QMainWindow):
         header = QHBoxLayout()
 
         title_container = QVBoxLayout()
+
         title_container.setSpacing(2)
 
-        title = QLabel("Focus Flow")
-        title.setObjectName("appTitle")
+        title = QLabel(
+            "Focus Flow"
+        )
+
+        title.setObjectName(
+            "appTitle"
+        )
 
         subtitle = QLabel(
             "Focus deeply. Rest intentionally."
         )
-        subtitle.setObjectName("appSubtitle")
 
-        title_container.addWidget(title)
-        title_container.addWidget(subtitle)
+        subtitle.setObjectName(
+            "appSubtitle"
+        )
 
-        header.addLayout(title_container)
+        title_container.addWidget(
+            title
+        )
+
+        title_container.addWidget(
+            subtitle
+        )
+
+        header.addLayout(
+            title_container
+        )
+
         header.addStretch()
 
+        self.history_button = QPushButton("History")
+        self.history_button.setObjectName("secondaryButton")
+        self.history_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        header.addWidget(self.history_button)
+
+        # -----------------------------------------------------
+        # Settings
+        # -----------------------------------------------------
+
         self.settings_button = QPushButton()
-        self.settings_button.setObjectName("settingsButton")
+
+        self.settings_button.setObjectName(
+            "settingsButton"
+        )
 
         icon_path = (
             Path(__file__).resolve().parent.parent
@@ -969,7 +1386,39 @@ class MainWindow(QMainWindow):
             self.settings_button
         )
 
-        self.main_layout.addLayout(header)
+        self.main_layout.addLayout(
+            header
+        )
+
+        # -----------------------------------------------------
+        # Task input
+        # -----------------------------------------------------
+
+        task_label = QLabel(
+            "What are you focusing on?"
+        )
+
+        task_label.setObjectName(
+            "taskLabel"
+        )
+
+        self.main_layout.addWidget(
+            task_label
+        )
+
+        self.task_input = QLineEdit()
+
+        self.task_input.setPlaceholderText(
+            "e.g. Build Focus Flow"
+        )
+
+        self.task_input.setObjectName(
+            "taskInput"
+        )
+
+        self.main_layout.addWidget(
+            self.task_input
+        )
 
         # -----------------------------------------------------
         # Mode
@@ -987,7 +1436,9 @@ class MainWindow(QMainWindow):
             "modeLabel"
         )
 
-        self.main_layout.addSpacing(8)
+        self.main_layout.addSpacing(
+            8
+        )
 
         self.main_layout.addWidget(
             self.mode_label
@@ -998,6 +1449,7 @@ class MainWindow(QMainWindow):
         # -----------------------------------------------------
 
         self.timer_card = QFrame()
+
         self.timer_card.setObjectName(
             "timerCard"
         )
@@ -1013,7 +1465,9 @@ class MainWindow(QMainWindow):
             42,
         )
 
-        card_layout.setSpacing(12)
+        card_layout.setSpacing(
+            12
+        )
 
         self.time_label = QLabel(
             "25:00"
@@ -1061,8 +1515,13 @@ class MainWindow(QMainWindow):
             "progressBar"
         )
 
-        self.progress.setTextVisible(False)
-        self.progress.setFixedHeight(7)
+        self.progress.setTextVisible(
+            False
+        )
+
+        self.progress.setFixedHeight(
+            7
+        )
 
         self.main_layout.addWidget(
             self.progress
@@ -1073,35 +1532,70 @@ class MainWindow(QMainWindow):
         # -----------------------------------------------------
 
         dots_layout = QHBoxLayout()
-        dots_layout.setSpacing(8)
+
+        dots_layout.setSpacing(
+            8
+        )
+
         dots_layout.setAlignment(
             Qt.AlignmentFlag.AlignCenter
         )
 
         self.session_dots = []
 
-        for _ in range(4):
+        for _ in range(12):
             dot = QFrame()
-            dot.setFixedSize(9, 9)
+
+            dot.setFixedSize(
+                9,
+                9,
+            )
+
             dot.setObjectName(
                 "sessionDot"
             )
 
-            dots_layout.addWidget(dot)
-            self.session_dots.append(dot)
+            dots_layout.addWidget(
+                dot
+            )
+
+            self.session_dots.append(
+                dot
+            )
 
         self.main_layout.addLayout(
             dots_layout
         )
 
+        # -----------------------------------------------------
+        # Daily goal
+        # -----------------------------------------------------
+
+        self.goal_label = QLabel()
+
+        self.goal_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+
+        self.goal_label.setObjectName(
+            "goalLabel"
+        )
+
+        self.main_layout.addWidget(
+            self.goal_label
+        )
+
         self.main_layout.addStretch()
 
         # -----------------------------------------------------
-        # Control buttons
+        # Controls
         # -----------------------------------------------------
 
         controls = QHBoxLayout()
-        controls.setSpacing(10)
+
+        controls.setSpacing(
+            10
+        )
 
         self.reset_button = QPushButton(
             "Reset"
@@ -1132,7 +1626,10 @@ class MainWindow(QMainWindow):
             self.pause_button,
             self.start_button,
         ):
-            button.setMinimumHeight(46)
+            button.setMinimumHeight(
+                46
+            )
+
             button.setCursor(
                 Qt.CursorShape.PointingHandCursor
             )
@@ -1157,9 +1654,7 @@ class MainWindow(QMainWindow):
         # Footer
         # -----------------------------------------------------
 
-        self.footer_label = QLabel(
-            "25 min focus  •  5 min break"
-        )
+        self.footer_label = QLabel()
 
         self.footer_label.setAlignment(
             Qt.AlignmentFlag.AlignCenter
@@ -1194,6 +1689,10 @@ class MainWindow(QMainWindow):
             self.open_settings
         )
 
+        self.history_button.clicked.connect(
+            self.open_history
+        )
+
         self.timer.tick.connect(
             self.update_display
         )
@@ -1203,14 +1702,21 @@ class MainWindow(QMainWindow):
         )
 
     # =========================================================
-    # Timer
+    # Initial timer
     # =========================================================
 
     def load_initial_timer(self):
         self.mode = "Focus"
+
         self.session_number = 1
 
-        self.set_mode("Focus")
+        self.current_task = ""
+
+        self.focus_start_time = None
+
+        self.set_mode(
+            "Focus"
+        )
 
         minutes = (
             self.settings.get_focus_minutes()
@@ -1224,16 +1730,74 @@ class MainWindow(QMainWindow):
             self.timer.remaining_seconds
         )
 
+        self.update_goal_display()
+
+    # =========================================================
+    # Timer controls
+    # =========================================================
+
     def start_timer(self):
+        if self.mode == "Focus":
+            if not self.current_task:
+                task = (
+                    self.task_input.text()
+                    .strip()
+                )
+
+                if not task:
+                    QMessageBox.warning(
+                        self,
+                        "Focus task required",
+                        "Please enter what you want to focus on before starting.",
+                    )
+
+                    self.task_input.setFocus()
+
+                    return
+
+                self.current_task = task
+
+                if hasattr(self, "floating_timer"):
+                    self.floating_timer.set_task_name(task)
+
+                self.focus_start_time = (
+                    datetime.now()
+                )
+
+            self.task_input.setEnabled(
+                False
+            )
+
         self.timer.start()
+
         self.update_buttons()
 
     def pause_timer(self):
         self.timer.pause()
+
         self.update_buttons()
+
+    def toggle_timer(self):
+        if self.timer.is_running():
+            self.pause_timer()
+        else:
+            self.start_timer()
 
     def reset_timer(self):
         self.timer.pause()
+
+        self.current_task = ""
+
+        if hasattr(self, "floating_timer"):
+            self.floating_timer.set_task_name("")
+
+        self.focus_start_time = None
+
+        self.task_input.setEnabled(
+            True
+        )
+
+        self.task_input.clear()
 
         if self.mode == "Focus":
             minutes = (
@@ -1260,8 +1824,13 @@ class MainWindow(QMainWindow):
 
         self.update_buttons()
 
+    # =========================================================
+    # Display
+    # =========================================================
+
     def update_display(self, seconds):
         minutes = seconds // 60
+
         remaining_seconds = seconds % 60
 
         self.time_label.setText(
@@ -1285,7 +1854,9 @@ class MainWindow(QMainWindow):
         self.update_buttons()
 
     def update_buttons(self):
-        running = self.timer.is_running()
+        running = (
+            self.timer.is_running()
+        )
 
         self.start_button.setEnabled(
             not running
@@ -1295,8 +1866,11 @@ class MainWindow(QMainWindow):
             running
         )
 
+        if hasattr(self, "floating_timer"):
+            self.floating_timer.update_pause_button()
+
     # =========================================================
-    # Pomodoro cycle
+    # Timer finished
     # =========================================================
 
     def timer_finished(self):
@@ -1306,30 +1880,91 @@ class MainWindow(QMainWindow):
         )
 
         if self.mode == "Focus":
-            self.show_break_dialog()
+            self.save_completed_focus_session()
 
-        else:
+            if self.settings.get_notifications_enabled():
+                self.notifications.focus_complete()
+
+            break_type = self.next_break_type()
+            self.prepare_break(break_type)
+            self.show_break_dialog(break_type)
+
+        elif self.mode == "Short Break":
+            if self.settings.get_notifications_enabled():
+                self.notifications.short_break_complete()
+
+            self.prepare_focus_session()
             self.show_focus_dialog()
 
-    def show_break_dialog(self):
-        sessions = (
-            self.settings
-            .get_sessions_before_long_break()
+        else:
+            if self.settings.get_notifications_enabled():
+                self.notifications.long_break_complete()
+
+            self.prepare_focus_session()
+            self.show_focus_dialog()
+
+    # =========================================================
+    # History
+    # =========================================================
+
+    def save_completed_focus_session(self):
+        if not self.current_task:
+            return
+
+        duration_seconds = (
+            self.timer.total_seconds
         )
 
-        if self.session_number >= sessions:
-            break_type = "long"
+        start_time = (
+            self.focus_start_time
+            or datetime.now()
+        )
 
-            break_text = (
-                "You've completed a full focus cycle."
+        try:
+            self.history.add_focus_session(
+                task=self.current_task,
+                start_time=start_time.isoformat(
+                    timespec="seconds"
+                ),
+                duration_seconds=duration_seconds,
+            )
+        except DatabaseError as error:
+            QMessageBox.warning(
+                self,
+                "Focus session was not saved",
+                "The timer will continue, but this completed session could "
+                f"not be saved.\n\n{error}",
             )
 
-        else:
-            break_type = "short"
+        self.current_task = ""
 
-            break_text = (
-                "Your focus session is complete."
-            )
+        if hasattr(self, "floating_timer"):
+            self.floating_timer.set_task_name("")
+
+        self.focus_start_time = None
+
+        self.task_input.setEnabled(
+            True
+        )
+
+        self.task_input.clear()
+
+        self.update_goal_display()
+
+    # =========================================================
+    # Break dialogs
+    # =========================================================
+
+    def next_break_type(self):
+        sessions = self.settings.get_sessions_before_long_break()
+        return "long" if self.session_number >= sessions else "short"
+
+    def show_break_dialog(self, break_type):
+        break_text = (
+            "You've completed a full focus cycle."
+            if break_type == "long"
+            else "Your focus session is complete."
+        )
 
         box = QMessageBox(self)
 
@@ -1346,14 +1981,18 @@ class MainWindow(QMainWindow):
                 "Would you like to start your long break?"
             )
 
-            button_text = "Start Long Break"
+            button_text = (
+                "Start Long Break"
+            )
 
         else:
             informative = (
                 "Would you like to start your short break?"
             )
 
-            button_text = "Start Short Break"
+            button_text = (
+                "Start Short Break"
+            )
 
         box.setInformativeText(
             informative
@@ -1371,11 +2010,11 @@ class MainWindow(QMainWindow):
 
         box.exec()
 
-        if box.clickedButton() == start_button:
-            if break_type == "long":
-                self.start_long_break()
-            else:
-                self.start_short_break()
+        if (
+            box.clickedButton()
+            == start_button
+        ):
+            self.start_timer()
 
     def show_focus_dialog(self):
         box = QMessageBox(self)
@@ -1404,80 +2043,80 @@ class MainWindow(QMainWindow):
 
         box.exec()
 
-        if box.clickedButton() == start_button:
-            self.start_focus()
+        if (
+            box.clickedButton()
+            == start_button
+        ):
+            # Focus mode is already prepared. The user chooses a task and
+            # explicitly presses Start when ready.
+            self.task_input.setFocus()
+
+    # =========================================================
+    # Pomodoro cycle
+    # =========================================================
 
     def start_short_break(self):
-        self.mode = "Short Break"
-
-        self.set_mode(
-            "Short Break"
-        )
-
-        minutes = (
-            self.settings
-            .get_short_break_minutes()
-        )
-
-        self.timer.reset(
-            minutes * 60
-        )
-
+        self.prepare_break("short")
         self.timer.start()
-
         self.update_buttons()
 
     def start_long_break(self):
-        self.mode = "Long Break"
-
-        self.set_mode(
-            "Long Break"
-        )
-
-        minutes = (
-            self.settings
-            .get_long_break_minutes()
-        )
-
-        self.timer.reset(
-            minutes * 60
-        )
-
+        self.prepare_break("long")
         self.timer.start()
-
         self.update_buttons()
 
     def start_focus(self):
+        """Prepare a new focus session; starting requires an explicit click."""
+        self.prepare_focus_session()
+
+    def prepare_break(self, break_type):
+        if break_type == "long":
+            self.set_mode("Long Break")
+            minutes = self.settings.get_long_break_minutes()
+        else:
+            self.set_mode("Short Break")
+            minutes = self.settings.get_short_break_minutes()
+
+        self.timer.reset(minutes * 60)
+        self.update_buttons()
+
+    def prepare_focus_session(self):
         sessions = (
             self.settings
             .get_sessions_before_long_break()
         )
 
-        # If we have completed a full cycle,
-        # begin again at session 1.
         if self.session_number >= sessions:
             self.session_number = 1
         else:
             self.session_number += 1
 
-        self.mode = "Focus"
-
-        self.set_mode(
-            "Focus"
-        )
+        self.set_mode("Focus")
 
         minutes = (
             self.settings
             .get_focus_minutes()
         )
 
-        self.timer.reset(
-            minutes * 60
-        )
+        self.timer.reset(minutes * 60)
 
-        self.timer.start()
+        self.current_task = ""
+
+        if hasattr(self, "floating_timer"):
+            self.floating_timer.set_task_name("")
+
+        self.focus_start_time = None
+        self.task_input.setEnabled(True)
+        self.task_input.clear()
+
+        self.task_input.setFocus()
 
         self.update_buttons()
+
+
+    # =========================================================
+    # Mode
+    # =========================================================
 
     def set_mode(self, mode):
         self.mode = mode
@@ -1496,6 +2135,9 @@ class MainWindow(QMainWindow):
             self.mode_label.setText(
                 "LONG BREAK"
             )
+
+        if hasattr(self, "floating_timer"):
+            self.floating_timer.set_mode(mode)
 
         self.update_session_information()
 
@@ -1543,8 +2185,7 @@ class MainWindow(QMainWindow):
 
             if (
                 self.mode == "Focus"
-                and index + 1
-                == self.session_number
+                and index + 1 == self.session_number
             ):
                 dot.setProperty(
                     "active",
@@ -1553,8 +2194,7 @@ class MainWindow(QMainWindow):
 
             elif (
                 self.mode != "Focus"
-                and index + 1
-                <= self.session_number
+                and index + 1 <= self.session_number
             ):
                 dot.setProperty(
                     "active",
@@ -1569,6 +2209,49 @@ class MainWindow(QMainWindow):
 
             dot.style().unpolish(dot)
             dot.style().polish(dot)
+
+    # =========================================================
+    # Goal
+    # =========================================================
+
+    def update_goal_display(self):
+        if not self.database.is_available:
+            self.goal_label.setText(
+                "Session history is unavailable. Check the application data folder."
+            )
+            self.goal_label.setToolTip(self.database.error_message)
+            return
+
+        self.goal_label.setToolTip("")
+        total_seconds = (
+            self.history.get_today_total()
+        )
+
+        total_minutes = (
+            total_seconds // 60
+        )
+
+        goal_minutes = (
+            self.settings
+            .get_daily_goal_minutes()
+        )
+
+        if total_minutes >= goal_minutes:
+            self.goal_label.setText(
+                f"Daily goal complete • "
+                f"{total_minutes} / {goal_minutes} min"
+            )
+
+        else:
+            self.goal_label.setText(
+                f"Today: "
+                f"{total_minutes} / "
+                f"{goal_minutes} min focused"
+            )
+
+    # =========================================================
+    # Footer
+    # =========================================================
 
     def update_footer(self):
         focus = (
@@ -1593,12 +2276,25 @@ class MainWindow(QMainWindow):
         )
 
     # =========================================================
+    # History
+    # =========================================================
+
+    def open_history(self):
+        dialog = HistoryDialog(
+            self.history,
+            self.settings,
+            self,
+        )
+        dialog.exec()
+
+    # =========================================================
     # Settings
     # =========================================================
 
     def open_settings(self):
         dialog = SettingsDialog(
             self.settings,
+            self.sound_manager,
             self,
         )
 
@@ -1612,11 +2308,76 @@ class MainWindow(QMainWindow):
 
             self.update_session_information()
 
+            self.update_goal_display()
+
             if not self.timer.is_running():
                 self.reset_timer()
 
     # =========================================================
-    # Main window theme
+    # Floating timer
+    # =========================================================
+
+    def show_floating_timer(self):
+        self.floating_timer.set_mode(
+            self.mode
+        )
+
+        self.floating_timer.update_time(
+            self.timer.remaining_seconds
+        )
+
+        self.floating_timer.show()
+
+        self.floating_timer.raise_()
+
+    def hide_floating_timer(self):
+        self.floating_timer.hide()
+
+    def event(self, event):
+        result = super().event(event)
+        if event.type() in (
+            QEvent.Type.WindowActivate,
+            QEvent.Type.WindowDeactivate,
+        ):
+            # Qt updates application/window activation after this event has
+            # been delivered, so defer a single event-loop turn without
+            # polling continuously.
+            QTimer.singleShot(0, self.sync_floating_timer_visibility)
+        return result
+
+    def sync_floating_timer_visibility(self, app_is_active=None):
+        """Show the overlay only after Focus Flow loses application focus."""
+        if app_is_active is None:
+            app = QApplication.instance()
+            app_is_active = (
+                app is not None
+                and app.applicationState()
+                == Qt.ApplicationState.ApplicationActive
+            )
+
+        if self.isActiveWindow() or app_is_active:
+            self.hide_floating_timer()
+        else:
+            self.show_floating_timer()
+
+    # =========================================================
+    # Application
+    # =========================================================
+
+    def close_application(self):
+        self.floating_timer.close()
+
+        self.database.close()
+
+        self.close()
+
+    def closeEvent(self, event):
+        self.database.close()
+
+        event.accept()
+
+    # =========================================================
+    # Theme
     # =========================================================
 
     def apply_theme(self):
@@ -1634,6 +2395,9 @@ class MainWindow(QMainWindow):
             or theme["accent"]
         )
 
+        if hasattr(self, "floating_timer"):
+            self.floating_timer.apply_theme(theme, accent)
+
         self.setStyleSheet(
             f"""
             QMainWindow {{
@@ -1643,7 +2407,8 @@ class MainWindow(QMainWindow):
             QWidget {{
                 color: {theme["text"]};
                 font-family:
-                    "SF Pro Display",
+                    -apple-system,
+                    BlinkMacSystemFont,
                     "Helvetica Neue",
                     sans-serif;
             }}
@@ -1658,12 +2423,30 @@ class MainWindow(QMainWindow):
                 font-size: 12px;
             }}
 
+            QLabel#taskLabel {{
+                color: {theme["secondary_text"]};
+                font-size: 12px;
+                font-weight: 600;
+            }}
+
+            QLineEdit#taskInput {{
+                background: {theme["input"]};
+                color: {theme["input_text"]};
+                border: 1px solid {theme["border"]};
+                border-radius: 10px;
+                padding: 10px 12px;
+                font-size: 13px;
+            }}
+
+            QLineEdit#taskInput:focus {{
+                border: 2px solid {accent};
+            }}
+
             QPushButton#settingsButton {{
                 background: {theme["surface"]};
                 color: {theme["text"]};
                 border: 1px solid {theme["border"]};
                 border-radius: 12px;
-                font-size: 18px;
             }}
 
             QPushButton#settingsButton:hover {{
@@ -1714,6 +2497,12 @@ class MainWindow(QMainWindow):
                 background: {accent};
             }}
 
+            QLabel#goalLabel {{
+                color: {theme["secondary_text"]};
+                font-size: 11px;
+                font-weight: 600;
+            }}
+
             QPushButton {{
                 border-radius: 12px;
                 min-height: 44px;
@@ -1726,10 +2515,6 @@ class MainWindow(QMainWindow):
                 background: {accent};
                 color: {theme["button_text"]};
                 border: none;
-            }}
-
-            QPushButton#primaryButton:hover {{
-                background: {accent};
             }}
 
             QPushButton#primaryButton:disabled {{

@@ -8,13 +8,21 @@ from app.main_window import MainWindow
 def main():
     app = QApplication(sys.argv)
 
-    app.setApplicationName("Focus Flow")
-    app.setOrganizationName("Focus Flow")
+    app.setApplicationName(
+        "Focus Flow"
+    )
+
+    app.setOrganizationName(
+        "Focus Flow"
+    )
 
     window = MainWindow()
+
     window.show()
 
-    sys.exit(app.exec())
+    sys.exit(
+        app.exec()
+    )
 
 
 if __name__ == "__main__":

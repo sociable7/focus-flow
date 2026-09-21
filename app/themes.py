@@ -54,4 +54,7 @@ THEMES = {
 
 
 def get_theme(name):
-    return THEMES.get(name, THEMES["Midnight"])
+    return THEMES.get(
+        name,
+        THEMES["Midnight"],
+    )

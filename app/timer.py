@@ -10,7 +10,9 @@ class PomodoroTimer(QObject):
 
         self._timer = QTimer()
         self._timer.setInterval(1000)
-        self._timer.timeout.connect(self._on_tick)
+        self._timer.timeout.connect(
+            self._on_tick
+        )
 
         self.remaining_seconds = 0
         self.total_seconds = 0
@@ -28,16 +30,26 @@ class PomodoroTimer(QObject):
         self.total_seconds = seconds
         self.remaining_seconds = seconds
 
-        self.tick.emit(self.remaining_seconds)
+        self.tick.emit(
+            self.remaining_seconds
+        )
 
     def is_running(self):
         return self._timer.isActive()
 
     def _on_tick(self):
-        if self.remaining_seconds > 0:
-            self.remaining_seconds -= 1
-            self.tick.emit(self.remaining_seconds)
-
+        # A completed timer is inert until its owner explicitly resets it.
+        # This guarantees one finished signal per timer reset.
         if self.remaining_seconds <= 0:
+            self._timer.stop()
+            return
+
+        self.remaining_seconds -= 1
+
+        self.tick.emit(
+            self.remaining_seconds
+        )
+
+        if self.remaining_seconds == 0:
             self._timer.stop()
             self.finished.emit()
