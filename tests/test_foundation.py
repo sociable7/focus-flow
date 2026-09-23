@@ -244,6 +244,15 @@ class MigrationTests(unittest.TestCase):
 
 
 class ThemeServiceTests(unittest.TestCase):
+    @staticmethod
+    def _luma(color):
+        """Perceptual luma of a ``#RRGGBB`` colour (0 … 255)."""
+        return (
+            0.299 * int(color[1:3], 16)
+            + 0.587 * int(color[3:5], 16)
+            + 0.114 * int(color[5:7], 16)
+        )
+
     def test_resolve_defaults_to_midnight(self):
         resolved = theme_service.resolve("Nope", "", "")
         self.assertEqual(resolved["name"], "Midnight")
@@ -269,6 +278,44 @@ class ThemeServiceTests(unittest.TestCase):
         self.assertIn("#123456", main)
         self.assertIn("#123456", floating)
         self.assertIn("background: #FFFFFF", floating)
+
+    def test_tonal_variant_shifts_a_subtle_step(self):
+        # Dark surfaces lighten, light surfaces darken.
+        lighter = theme_service.tonal_variant("#191B20", 1)
+        self.assertGreater(self._luma(lighter), self._luma("#191B20"))
+        darker = theme_service.tonal_variant("#FFFFFF", 1)
+        self.assertLess(self._luma(darker), self._luma("#FFFFFF"))
+        # Two steps sit farther from the source than one.
+        two = theme_service.tonal_variant("#FFFFFF", 2)
+        self.assertLess(self._luma(two), self._luma(darker))
+        # Unknown input passes through unchanged; never raises.
+        self.assertEqual(theme_service.tonal_variant("nope", 1), "nope")
+
+    def test_ring_palette_is_a_subtle_derivation_per_theme(self):
+        from app.themes import THEMES
+
+        for name, tokens in THEMES.items():
+            with self.subTest(theme=name):
+                surface = tokens["surface"]
+                track, arc = theme_service.ring_palette(surface)
+                source = self._luma(surface)
+                one = self._luma(track)
+                two = self._luma(arc)
+                # Both tones are small tonal steps from the surface...
+                self.assertNotEqual(one, source)
+                self.assertNotEqual(two, one)
+                self.assertLess(abs(one - source), 30)
+                self.assertLess(abs(two - source), 60)
+                # ...in the same direction, the arc one step farther...
+                self.assertEqual(one > source, two > source)
+                self.assertGreater(abs(two - source), abs(one - source))
+                # ...and never the accent colour.
+                self.assertNotEqual(arc, tokens["accent"].lower())
+        # Themes with different surfaces derive different palettes.
+        self.assertNotEqual(
+            theme_service.ring_palette(THEMES["Midnight"]["surface"]),
+            theme_service.ring_palette(THEMES["Minimal"]["surface"]),
+        )
 
 
 if __name__ == "__main__":

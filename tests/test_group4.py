@@ -270,8 +270,11 @@ class MiniRedesignTests(unittest.TestCase):
         timer.reset(1500)
         mini = FloatingTimer(timer, settings=None)
         self.assertFalse(mini.skip_button.isVisibleTo(mini))
+        # The ring mirrors elapsed/total from the shared clock (the
+        # Clock updates remaining_seconds before every tick).
+        timer.remaining_seconds = 750
         mini.update_time(750)
-        self.assertEqual(mini.mini_progress.value(), 50)
+        self.assertAlmostEqual(mini.ring.progress, 0.5)
         mini.set_break_visible(True)
         self.assertTrue(mini.skip_button.isVisibleTo(mini))
 

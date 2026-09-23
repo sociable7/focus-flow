@@ -130,7 +130,7 @@ def build_main_window_stylesheet(resolved):
             }}
 
             QLabel#timeLabel {{
-                font-size: 88px;
+                font-size: 76px;
                 font-weight: 300;
             }}
 
@@ -209,9 +209,8 @@ def build_main_window_stylesheet(resolved):
 def _is_dark_surface(surface):
     """True when a ``#RRGGBB`` surface token is visually dark.
 
-    Only dark themes need an explicit combo-popup background; light
-    themes already render the popup with the correct system light
-    palette, so styling them would alter Light mode.
+    Drives tonal derivation: dark surfaces are lightened towards
+    legibility, light surfaces darkened (see ``tonal_variant``).
     """
     try:
         red = int(surface[1:3], 16)
@@ -222,27 +221,94 @@ def _is_dark_surface(surface):
     return 0.299 * red + 0.587 * green + 0.114 * blue < 128
 
 
+def tonal_variant(color, steps=1):
+    """Shift a ``#RRGGBB`` colour by whole tonal steps.
+
+    Dark surfaces are lightened, light surfaces darkened, so the result
+    stays a small tonal difference from the source in either direction
+    (HSL lightness is moved ``0.08`` per step, clamped to gamut). Used
+    for derived chrome — e.g. the floating timer's progress ring — that
+    must belong to the active theme without hard-coding per-theme
+    colours. Unknown input is returned unchanged; never raises.
+    """
+    try:
+        from PySide6.QtGui import QColor
+
+        variant = QColor(color)
+        if not variant.isValid():
+            return color
+        step = 0.08 * abs(float(steps))
+        lightness = variant.lightnessF()
+        if _is_dark_surface(color):
+            lightness = min(1.0, lightness + step)
+        else:
+            lightness = max(0.0, lightness - step)
+        # QColor exposes no setLightnessF in this Qt build: round-trip
+        # through HSL, keeping hue and HSL saturation untouched.
+        variant.setHslF(
+            variant.hueF(),
+            variant.hslSaturationF(),
+            lightness,
+            variant.alphaF(),
+        )
+        return variant.name()
+    except Exception:
+        return color
+
+
+def ring_palette(surface):
+    """Subtle track + progress tones derived from a theme surface.
+
+    The floating timer's progress ring must read as a quiet tonal
+    variation of the card it sits on — never an accent colour. The
+    track is one tonal step from the surface, the elapsed arc two, so
+    progress is legible at a glance without dominating the widget.
+    """
+    return tonal_variant(surface, 1), tonal_variant(surface, 2)
+
+
 def build_shell_stylesheet(resolved):
     """Sidebar, pages, cards, tables, inputs and completion banner."""
     theme = resolved["tokens"]
     background = resolved["background"]
     accent = resolved["accent"]
     # Combo dropdown lists (History's "All time" / "All tasks" filters)
-    # have no themed background of their own: without a rule they keep
-    # Qt's system light palette while inheriting the theme's light text,
-    # which is unreadable in Dark mode. Light themes are left untouched
-    # so their popup keeps its existing appearance byte for byte; the
-    # values below mirror the Settings dialog's popup rule.
-    combo_popup = ""
-    if _is_dark_surface(theme["surface"]):
-        combo_popup = f"""
+    # previously had no themed background of their own: they kept Qt's
+    # system palette while inheriting the theme's text, which was
+    # unreadable in Dark mode and a generic grey in the light themes.
+    # The popup is now derived from the same tokens as the rest of the
+    # shell, so every Focus Flow theme gets a popup from its own
+    # palette (background, text, border, selection and hover all come
+    # from the active theme; no per-theme colours are hard-coded).
+    #
+    # Qt quirk: the QComboBox#filterCombo field rule further down must
+    # declare selection-background-color/selection-color as well — a
+    # combo box's own background rule otherwise wins over the item
+    # view's selection colours and the popup's highlighted row paints
+    # the field background instead of the theme accent.
+    combo_popup = f"""
             QComboBox QAbstractItemView {{
                 background: {theme["surface"]};
                 color: {theme["text"]};
+                border: 1px solid {theme["border"]};
                 selection-background-color:
                     {accent};
                 selection-color:
                     {theme["button_text"]};
+            }}
+
+            QComboBox QAbstractItemView::item {{
+                padding: 5px 10px;
+            }}
+
+            QComboBox QAbstractItemView::item:hover {{
+                background: {theme["surface_alt"]};
+                color: {theme["text"]};
+            }}
+
+            QComboBox QAbstractItemView::item:selected {{
+                background: {accent};
+                color: {theme["button_text"]};
             }}
 """
     return f"""
@@ -380,6 +446,8 @@ def build_shell_stylesheet(resolved):
                 border-radius: 9px;
                 padding: 7px 10px;
                 min-height: 20px;
+                selection-background-color: {accent};
+                selection-color: {theme["button_text"]};
             }}
 {combo_popup}
             QTableWidget#dataTable {{
@@ -516,17 +584,6 @@ def build_floating_stylesheet(resolved):
             QPushButton#pauseButton:disabled {{
                 background: {theme["border"]};
                 color: {theme["secondary_text"]};
-            }}
-
-            QProgressBar#miniProgressBar {{
-                background: {theme["surface_alt"]};
-                border: none;
-                border-radius: 2px;
-            }}
-
-            QProgressBar#miniProgressBar::chunk {{
-                background: {accent};
-                border-radius: 2px;
             }}
 
             QPushButton#miniSkipButton {{

@@ -138,9 +138,14 @@ class MainWindow(QMainWindow):
             620,
         )
 
+        # Taller than before (740 → 860): the timer card now holds a
+        # 240px progress ring around the number, so the focus page
+        # needs more vertical room — in particular while the
+        # completion banner is shown, when nothing may be compressed
+        # (a squeezed card would push the ring outside the card).
         self.resize(
             900,
-            740,
+            860,
         )
 
         # =====================================================
@@ -218,7 +223,10 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         shell.addWidget(self.pages, 1)
 
-        self.focus_view = FocusView()
+        # The FocusView ring is display-only and binds to the SAME
+        # shared Clock instance the floating timer uses: one timer,
+        # one countdown, two mirrored rings.
+        self.focus_view = FocusView(clock=self.timer)
         self.history_view = HistoryView(self.history.sessions)
         self.stats_view = StatsView(self.history.sessions)
         self.goals_view = GoalsView(
@@ -1262,6 +1270,9 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, "floating_timer"):
             self.floating_timer.apply_theme(resolved)
+
+        if hasattr(self, "focus_view"):
+            self.focus_view.apply_ring_theme(resolved)
 
         self.setStyleSheet(
             theme_service.build_main_window_stylesheet(resolved)

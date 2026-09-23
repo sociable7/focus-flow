@@ -10,11 +10,12 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
-    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
+
+from app.ui.progress_ring import ProgressRing, RingProgressBinding
 
 
 class FloatingTimer(QWidget):
@@ -54,9 +55,9 @@ class FloatingTimer(QWidget):
         )
 
         # Fixed width; the height hugs the visible rows (see
-        # ``_fit_height``). The skip row and the task row come and go
-        # (breaks, task capture, task hint), so a single fixed height
-        # would either clip the 32pt time readout or leave a blank gap.
+        # ``_fit_height``). The task row comes and goes (task capture,
+        # task hint), so a single fixed height would either clip the
+        # ring readout or leave a blank gap.
         self.setFixedWidth(236)
 
         self.setWindowFlags(
@@ -135,18 +136,12 @@ class FloatingTimer(QWidget):
         container_layout.setSpacing(6)
 
         # -----------------------------------------------------
-        # Top row
+        # Top row: close only (hides the mini; the session keeps
+        # running). Deliberately separate from — and above — the
+        # timer controls at the bottom, with stable geometry.
         # -----------------------------------------------------
 
         top_layout = QHBoxLayout()
-
-        self.mode_label = QLabel(
-            "FOCUS"
-        )
-
-        self.mode_label.setObjectName(
-            "modeLabel"
-        )
 
         self.close_button = QPushButton(
             "×"
@@ -171,11 +166,7 @@ class FloatingTimer(QWidget):
             "Hides the compact timer. The session keeps running."
         )
 
-        top_layout.addWidget(
-            self.mode_label
-        )
-
-        top_layout.addStretch()
+        top_layout.addStretch(1)
 
         top_layout.addWidget(
             self.close_button
@@ -185,16 +176,17 @@ class FloatingTimer(QWidget):
             top_layout
         )
 
-        self.task_label = QLabel()
-        self.task_label.setObjectName("taskLabel")
-        self.task_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.task_label.setWordWrap(False)
-        self.task_label.hide()
-        container_layout.addWidget(self.task_label)
+        # -----------------------------------------------------
+        # Ring readout (the main visual element): timer number
+        # and mode inside a subtle circular progress ring.
+        # -----------------------------------------------------
 
-        # -----------------------------------------------------
-        # Timer
-        # -----------------------------------------------------
+        self.ring = ProgressRing()
+
+        ring_layout = QVBoxLayout(self.ring)
+        ring_layout.setContentsMargins(18, 0, 18, 0)
+        ring_layout.setSpacing(2)
+        ring_layout.addStretch(1)
 
         self.time_label = QLabel(
             "25:00"
@@ -210,38 +202,61 @@ class FloatingTimer(QWidget):
 
         font = QFont()
 
-        font.setPointSize(32)
+        font.setPointSize(28)
         font.setWeight(
             QFont.Weight.DemiBold
         )
 
         self.time_label.setFont(font)
 
-        container_layout.addWidget(
-            self.time_label
+        ring_layout.addWidget(
+            self.time_label,
+            0,
+            Qt.AlignmentFlag.AlignCenter,
         )
+
+        self.mode_label = QLabel(
+            "FOCUS"
+        )
+
+        self.mode_label.setObjectName(
+            "modeLabel"
+        )
+
+        self.mode_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+
+        ring_layout.addWidget(
+            self.mode_label,
+            0,
+            Qt.AlignmentFlag.AlignCenter,
+        )
+
+        ring_layout.addStretch(1)
+
+        ring_row = QHBoxLayout()
+        ring_row.addStretch(1)
+        ring_row.addWidget(self.ring)
+        ring_row.addStretch(1)
+        container_layout.addLayout(ring_row)
+
+        self.task_label = QLabel()
+        self.task_label.setObjectName("taskLabel")
+        self.task_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.task_label.setWordWrap(False)
+        self.task_label.hide()
+        container_layout.addWidget(self.task_label)
 
         # -----------------------------------------------------
-        # Progress (mirrors the main timer card)
+        # Controls: always visible with stable geometry. There is
+        # deliberately no hover/fade behaviour: a visible control
+        # stays visible — and hit-testable — for as long as the
+        # pointer is on it.
         # -----------------------------------------------------
 
-        self.mini_progress = QProgressBar()
-
-        self.mini_progress.setObjectName(
-            "miniProgressBar"
-        )
-
-        self.mini_progress.setTextVisible(False)
-
-        self.mini_progress.setFixedHeight(5)
-
-        self.mini_progress.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-
-        self.mini_progress.setAccessibleName("Session progress")
-
-        container_layout.addWidget(
-            self.mini_progress
-        )
+        controls_row = QHBoxLayout()
+        controls_row.setSpacing(8)
 
         # -----------------------------------------------------
         # Pause button
@@ -267,8 +282,9 @@ class FloatingTimer(QWidget):
             "Starts or pauses the shared Pomodoro timer."
         )
 
-        container_layout.addWidget(
-            self.pause_button
+        controls_row.addWidget(
+            self.pause_button,
+            1,
         )
 
         # -----------------------------------------------------
@@ -297,12 +313,17 @@ class FloatingTimer(QWidget):
 
         self.skip_button.hide()
 
-        container_layout.addWidget(
-            self.skip_button
+        controls_row.addWidget(
+            self.skip_button,
+            1,
+        )
+
+        container_layout.addLayout(
+            controls_row
         )
 
         # -----------------------------------------------------
-        # Open-main-window button (always visible; explicit only)
+        # Open-main-window button (explicit only)
         # -----------------------------------------------------
 
         self.open_button = QPushButton(
@@ -327,6 +348,15 @@ class FloatingTimer(QWidget):
 
         container_layout.addWidget(
             self.open_button
+        )
+
+        # Display-only progress: the shared binding interpolates the
+        # ring between the clock's whole-second ticks so the arc
+        # glides instead of stepping. It never runs, owns or
+        # duplicates timer/session state; started/stopped with the
+        # window (see ``_sync_ring_progress``).
+        self.ring_progress = RingProgressBinding(
+            self.ring, self.timer, self
         )
 
         self._fit_height()
@@ -372,14 +402,34 @@ class FloatingTimer(QWidget):
             f"{minutes:02d}:{remaining_seconds:02d}"
         )
 
-        total = getattr(self.timer, "total_seconds", 0) or 0
-        if total > 0:
-            elapsed = max(0, total - seconds)
-            self.mini_progress.setValue(int(elapsed / total * 100))
-        else:
-            self.mini_progress.setValue(0)
+        # Every tick (resets and phase changes emit one too) anchors
+        # the ring's between-tick interpolation to the shared clock's
+        # exact reading, then refreshes the arc immediately.
+        self._rebase_progress(seconds)
+        self._sync_ring_progress()
 
         self.update_pause_button()
+
+    # =========================================================
+    # Ring progress (display-only; the Clock stays the source of truth)
+    # =========================================================
+
+    def _rebase_progress(self, seconds=None):
+        """Anchor the smooth ring interpolation to a fresh reading.
+
+        Delegates to the shared ``RingProgressBinding`` (same code
+        path as the main timer's ring).
+        """
+        self.ring_progress.rebase(seconds)
+
+    def _sync_ring_progress(self):
+        """Update the ring from the shared timer; never owns state.
+
+        Delegates to the shared ``RingProgressBinding``: the Clock
+        stays the source of truth, so pause/resume/skip/completion
+        stay in sync with the main timer. No second countdown exists.
+        """
+        self.ring_progress.sync()
 
     def skip_break(self):
         if self.skip_callback is not None:
@@ -442,6 +492,26 @@ class FloatingTimer(QWidget):
             )
             if height > 0:
                 self.setFixedSize(236, height)
+        except Exception:
+            pass
+
+    # =========================================================
+    # Ring progress lifecycle (the shared binding glides while shown)
+    # =========================================================
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Re-anchor to the clock's current reading (the widget was
+        # not polling while hidden), then glide between ticks again.
+        try:
+            self.ring_progress.start()
+        except Exception:
+            pass
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        try:
+            self.ring_progress.stop()
         except Exception:
             pass
 
@@ -773,6 +843,15 @@ class FloatingTimer(QWidget):
         self.setStyleSheet(
             theme_service.build_floating_stylesheet(effective)
         )
+        # Ring tones are derived from the active surface (one tonal
+        # step for the track, two for the arc) — no hard-coded
+        # per-theme colours; switching themes re-derives them.
+        try:
+            surface = effective["tokens"].get("surface", "#FFFFFF")
+            track, arc = theme_service.ring_palette(surface)
+            self.ring.set_colors(track, arc)
+        except Exception:
+            pass
 
     def _settings_theme_name(self):
         getter = getattr(self.settings, "get_theme", None)

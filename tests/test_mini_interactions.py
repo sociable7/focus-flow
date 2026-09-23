@@ -731,5 +731,279 @@ class MiniOpenMainWindowTests(unittest.TestCase):
                 window.close()
 
 
+class FloatingRingSyncTests(unittest.TestCase):
+    """The ring mirrors the shared Clock; the widget owns no timer state."""
+
+    def test_ring_progress_tracks_the_shared_clock(self):
+        from app.floating_timer import FloatingTimer
+        from app.timer import PomodoroTimer
+
+        timer = PomodoroTimer()
+        timer.reset(1500)
+        mini = FloatingTimer(timer, settings=None)
+        self.assertAlmostEqual(mini.ring.progress, 0.0)
+
+        # The Clock decrements remaining_seconds, then emits tick.
+        timer.remaining_seconds = 750
+        timer.tick.emit(750)
+        self.assertAlmostEqual(mini.ring.progress, 0.5)
+
+        timer.remaining_seconds = 0
+        timer.tick.emit(0)  # completion fills the ring
+        self.assertAlmostEqual(mini.ring.progress, 1.0)
+
+        timer.reset(1200)  # next phase (skip/prepare) emits its tick
+        self.assertAlmostEqual(mini.ring.progress, 0.0)
+        self.assertEqual(mini.time_label.text(), "20:00")
+        mini.close()
+
+    def test_ring_glides_between_ticks_without_jumping(self):
+        from unittest.mock import patch
+
+        from app.floating_timer import FloatingTimer
+        from app.timer import PomodoroTimer
+
+        timer = PomodoroTimer()
+        timer.reset(1500)
+        mini = FloatingTimer(timer, settings=None)
+        clock = {"now": 1000.0}
+        with (
+            patch.object(timer, "is_running", return_value=True),
+            patch(
+                "app.ui.progress_ring.time.monotonic",
+                side_effect=lambda: clock["now"],
+            ),
+        ):
+            mini.update_time(750)  # tick anchored at t=1000.0
+            self.assertAlmostEqual(mini.ring.progress, 0.5)
+
+            clock["now"] = 1000.5  # between whole-second ticks
+            mini._sync_ring_progress()
+            halfway = mini.ring.progress
+            self.assertGreater(halfway, 0.5)
+            # Moves smoothly, but never more than the elapsed slice:
+            # no once-per-second jumps around the circumference.
+            self.assertLess(halfway - 0.5, 1.0 / 1500)
+
+            clock["now"] = 1001.0
+            mini._sync_ring_progress()
+            self.assertGreater(mini.ring.progress, halfway)
+
+            mini.update_time(749)  # next real tick resyncs exactly
+            self.assertAlmostEqual(
+                mini.ring.progress, (1500 - 749) / 1500
+            )
+        mini.close()
+
+    def test_pause_freezes_and_resume_continues_from_same_point(self):
+        from unittest.mock import patch
+
+        from app.floating_timer import FloatingTimer
+        from app.timer import PomodoroTimer
+
+        timer = PomodoroTimer()
+        timer.reset(300)
+        timer.remaining_seconds = 120  # paused with 02:00 remaining
+        mini = FloatingTimer(timer, settings=None)
+        clock = {"now": 5000.0}
+        with patch(
+            "app.ui.progress_ring.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ):
+            mini.update_time(120)
+            frozen = mini.ring.progress
+            self.assertAlmostEqual(frozen, (300 - 120) / 300)
+
+            clock["now"] = 9000.0  # wall time passes while paused
+            mini._sync_ring_progress()
+            self.assertEqual(mini.ring.progress, frozen)
+
+        with (
+            patch.object(timer, "is_running", return_value=True),
+            patch(
+                "app.ui.progress_ring.time.monotonic",
+                side_effect=lambda: clock["now"],
+            ),
+        ):
+            mini._sync_ring_progress()  # resume: same point...
+            self.assertAlmostEqual(mini.ring.progress, frozen)
+            clock["now"] = 9000.5
+            mini._sync_ring_progress()  # ...then it keeps moving
+            self.assertGreater(mini.ring.progress, frozen)
+        mini.close()
+
+
+class FloatingControlsStabilityTests(unittest.TestCase):
+    """Controls stay visible and stable — no hover fade, no surprises.
+
+    Regression guard for the hover/opacity redesign: a control must
+    never fade out while it can still receive clicks, hovering must
+    not change geometry or hit-testing, and the close button stays at
+    the top of the window, separate from the timer controls.
+    """
+
+    CONTROLS = ("close_button", "pause_button", "skip_button", "open_button")
+
+    @staticmethod
+    def _enter(floating):
+        from PySide6.QtGui import QEnterEvent
+
+        floating.enterEvent(
+            QEnterEvent(QPointF(0, 0), QPointF(0, 0), QPointF(0, 0))
+        )
+
+    @staticmethod
+    def _leave(floating):
+        floating.leaveEvent(QEvent(QEvent.Type.Leave))
+
+    @staticmethod
+    def _snapshot(floating):
+        """Geometry, size and programmatic visibility of every control."""
+        state = {"size": floating.size()}
+        for name in FloatingControlsStabilityTests.CONTROLS:
+            button = getattr(floating, name)
+            state[name] = (
+                button.geometry(),
+                button.isVisibleTo(floating),
+                button.isEnabled(),
+            )
+        return state
+
+    @staticmethod
+    def _pause_button_pixel(floating):
+        """Rendered centre pixel of the pause button in the window."""
+        from PySide6.QtCore import QPoint
+
+        image = floating.grab().toImage()
+        center = floating.pause_button.geometry().center() + QPoint(
+            floating.container.pos().x(), floating.container.pos().y()
+        )
+        return image.pixelColor(center)
+
+    def test_no_opacity_fade_anywhere_on_the_floating_timer(self):
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+
+        with tempfile.TemporaryDirectory() as directory:
+            window = _make_window(directory)
+            try:
+                floating = window.floating_timer
+                window.show()
+                window.show_floating_timer()
+                APP.processEvents()
+
+                # No fade machinery at all: nothing can become
+                # visually hidden while still hit-testable.
+                self.assertEqual(
+                    floating.findChildren(QGraphicsOpacityEffect), []
+                )
+                self.assertFalse(hasattr(floating, "controls_effect"))
+                # At rest the controls are fully visible, not "quiet".
+                self.assertTrue(floating.pause_button.isVisibleTo(floating))
+                self.assertTrue(floating.open_button.isVisibleTo(floating))
+                self.assertTrue(floating.close_button.isVisibleTo(floating))
+            finally:
+                window.database.close()
+                window.close()
+
+    def test_hover_does_not_change_geometry_visibility_or_pixels(self):
+        from PySide6.QtTest import QTest
+
+        with tempfile.TemporaryDirectory() as directory:
+            window = _make_window(directory)
+            try:
+                floating = window.floating_timer
+                window.show()
+                window.show_floating_timer()
+                APP.processEvents()
+
+                at_rest = self._snapshot(floating)
+                pixel_at_rest = self._pause_button_pixel(floating)
+                # Visible control renders opaque accent, not a ghost.
+                self.assertGreaterEqual(pixel_at_rest.alpha(), 250)
+
+                self._enter(floating)
+                QTest.qWait(250)  # long enough for any fade to finish
+                hovered = self._snapshot(floating)
+                self.assertEqual(hovered, at_rest)
+                self.assertEqual(floating.size(), at_rest["size"])
+                self.assertEqual(
+                    self._pause_button_pixel(floating), pixel_at_rest
+                )
+
+                self._leave(floating)
+                QTest.qWait(250)
+                self.assertEqual(self._snapshot(floating), at_rest)
+                self.assertEqual(
+                    self._pause_button_pixel(floating), pixel_at_rest
+                )
+            finally:
+                window.database.close()
+                window.close()
+
+    def test_control_stays_clickable_while_hovered(self):
+        from PySide6.QtTest import QTest
+
+        with tempfile.TemporaryDirectory() as directory:
+            window = _make_window(directory)
+            try:
+                floating = window.floating_timer
+                window.show()
+                window.prepare_focus_session()
+                window.task_input.setText("Hover task")
+                window.hide()
+                window.show_floating_timer()
+                APP.processEvents()
+
+                self._enter(floating)
+                QTest.qWait(250)
+                # Pressed while hovered: visible, opaque, and it works.
+                floating.pause_button.click()
+                self.assertTrue(window.timer.is_running())
+                self.assertTrue(floating.pause_button.isVisibleTo(floating))
+                self.assertGreaterEqual(
+                    self._pause_button_pixel(floating).alpha(), 250
+                )
+                floating.pause_button.click()
+                self.assertFalse(window.timer.is_running())
+            finally:
+                window.database.close()
+                window.close()
+
+    def test_close_button_stays_at_the_top_of_the_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            window = _make_window(directory)
+            try:
+                floating = window.floating_timer
+                window.show()
+                window.show_floating_timer()
+                APP.processEvents()
+
+                close = floating.close_button
+                # All controls share the container's coordinate space.
+                self.assertIs(close.parentWidget(), floating.container)
+                # Above the ring readout...
+                self.assertLess(close.geometry().top(),
+                                floating.ring.geometry().top())
+                # ...and well above the pause/skip/open control row,
+                # i.e. visually and functionally separate from it.
+                self.assertLess(close.geometry().bottom(),
+                                floating.pause_button.geometry().top())
+                self.assertLess(close.geometry().bottom(),
+                                floating.open_button.geometry().top())
+                # Right-aligned in the top row, 24x24 as before.
+                self.assertEqual(close.size(), close.minimumSize())
+                self.assertEqual(close.size().height(), 24)
+
+                # Existing close behaviour preserved: hides the mini
+                # only; the timer and main window are untouched.
+                main_visible = window.isVisible()
+                floating.close_button.click()
+                self.assertFalse(floating.isVisible())
+                self.assertEqual(window.isVisible(), main_visible)
+            finally:
+                window.database.close()
+                window.close()
+
+
 if __name__ == "__main__":
     unittest.main()

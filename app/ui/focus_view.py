@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.ui.progress_ring import ProgressRing, RingProgressBinding
+
 
 class FocusView(QWidget):
     start_requested = Signal()
@@ -24,11 +26,23 @@ class FocusView(QWidget):
     reset_requested = Signal()
     skip_requested = Signal()
 
-    def __init__(self, parent=None):
+    # Diameter of the ring around the timer number. The floating
+    # timer keeps the compact 160px default of ``ProgressRing``; this
+    # card uses a larger ring with the same thin pen and the same
+    # theme-derived tones so both windows read as one visual
+    # language.
+    RING_SIZE = 240
+
+    def __init__(self, parent=None, clock=None):
         super().__init__(parent)
         self._completion_callback = None
         self._completion_active = False
+        self._clock = clock
         self.build_ui()
+        # Display-only: one binding derives this card's ring progress
+        # from the SAME shared Clock the floating timer uses (see
+        # ``app.ui.progress_ring``). No second countdown is created.
+        self.ring_progress = RingProgressBinding(self.ring, clock, self)
 
     # =====================================================
     # UI
@@ -75,19 +89,54 @@ class FocusView(QWidget):
         self.timer_card.setObjectName("timerCard")
 
         card_layout = QVBoxLayout(self.timer_card)
-        card_layout.setContentsMargins(30, 40, 30, 36)
+        card_layout.setContentsMargins(30, 24, 30, 20)
         card_layout.setSpacing(10)
+
+        # -----------------------------------------------------
+        # Timer readout: the number inside the circular progress
+        # ring (same widget and progress semantics as the floating
+        # timer, sized for this card). The session caption sits
+        # under the number inside the ring, mirroring the compact
+        # window's number + label composition.
+        # -----------------------------------------------------
+
+        self.ring = ProgressRing(size=self.RING_SIZE)
+
+        ring_layout = QVBoxLayout(self.ring)
+        ring_layout.setContentsMargins(28, 0, 28, 0)
+        ring_layout.setSpacing(6)
+        ring_layout.addStretch(1)
 
         self.time_label = QLabel("25:00")
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.time_label.setObjectName("timeLabel")
         self.time_label.setAccessibleName("Time remaining")
-        card_layout.addWidget(self.time_label)
+        ring_layout.addWidget(
+            self.time_label,
+            0,
+            Qt.AlignmentFlag.AlignCenter,
+        )
 
         self.session_label = QLabel("Session 1 of 4")
         self.session_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.session_label.setObjectName("sessionLabel")
-        card_layout.addWidget(self.session_label)
+        ring_layout.addWidget(
+            self.session_label,
+            0,
+            Qt.AlignmentFlag.AlignCenter,
+        )
+
+        ring_layout.addStretch(1)
+
+        ring_row = QHBoxLayout()
+        ring_row.addStretch(1)
+        ring_row.addWidget(
+            self.ring,
+            0,
+            Qt.AlignmentFlag.AlignCenter,
+        )
+        ring_row.addStretch(1)
+        card_layout.addLayout(ring_row)
 
         layout.addWidget(self.timer_card)
 
@@ -254,3 +303,41 @@ class FocusView(QWidget):
             )
         else:
             self.goal_progress.setValue(0)
+
+    # =====================================================
+    # Progress ring (driven by the shared Clock, like the mini)
+    # =====================================================
+
+    def apply_ring_theme(self, resolved):
+        """Apply the theme-derived ring tones to the timer card ring.
+
+        Uses the same ``ring_palette`` derivation as the floating
+        timer (track/arc are tonal steps of the card surface), so
+        both rings pick up every Focus Flow theme identically — no
+        hard-coded per-theme colours.
+        """
+        from app.services import theme_service
+
+        try:
+            tokens = resolved["tokens"] if isinstance(resolved, dict) else {}
+            surface = tokens.get("surface", "#FFFFFF")
+            track, arc = theme_service.ring_palette(surface)
+            self.ring.set_colors(track, arc)
+        except Exception:
+            pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Re-anchor the ring to the clock's current reading (it was
+        # not gliding while hidden), then glide between ticks again.
+        try:
+            self.ring_progress.start()
+        except Exception:
+            pass
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        try:
+            self.ring_progress.stop()
+        except Exception:
+            pass

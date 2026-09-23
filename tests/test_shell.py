@@ -267,11 +267,13 @@ class HistoryViewTests(unittest.TestCase):
 
 
 class HistoryFilterPopupThemeTests(unittest.TestCase):
-    """Dark-mode regression: the History filter dropdowns must be themed.
+    """The History filter dropdowns must belong to the active theme.
 
     The "All time" / "All tasks" popup lists previously kept Qt's
-    system light background while inheriting the theme's light text,
-    which made them unreadable in Dark mode.
+    system palette while inheriting the theme's text — unreadable in
+    Dark mode (that fix stays) and a generic grey in the light themes.
+    The opened popup must now match every Focus Flow theme's surface,
+    selection and hover colours, all derived from its tokens.
     """
 
     def _seed(self, database):
@@ -279,16 +281,49 @@ class HistoryFilterPopupThemeTests(unittest.TestCase):
         database.add_session("Write tests", now, 1500)
         database.add_session("Review code", now, 600)
 
+    @staticmethod
+    def _token_luma(color):
+        """Luma of a ``#RRGGBB`` token (0 dark … 255 light)."""
+        return (
+            0.299 * int(color[1:3], 16)
+            + 0.587 * int(color[3:5], 16)
+            + 0.114 * int(color[5:7], 16)
+        )
+
     def _row_background_luma(self, combo, row=1):
         """Luma of an unselected popup row background (0 dark … 255 light)."""
         view = combo.view()
         image = view.grab().toImage()
         row_height = image.height() / max(1, view.model().rowCount())
-        # Right edge of the row: always background, never the item text.
+        # Inset from the right edge: past the themed 1px border, still
+        # right of the item text, so this is always row background.
         color = image.pixelColor(
-            image.width() - 2,
+            image.width() - 4,
             int(row_height * (row + 0.5)),
         )
+        return 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
+
+    def _selected_row_luma(self, combo, row=1):
+        """Luma of a selected popup row's background (the accent)."""
+        from PySide6.QtCore import QItemSelectionModel
+
+        combo.showPopup()
+        APP.processEvents()
+        view = combo.view()
+        index = view.model().index(row, 0)
+        view.selectionModel().setCurrentIndex(
+            index,
+            QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows,
+        )
+        APP.processEvents()
+        image = view.grab().toImage()
+        row_height = image.height() / max(1, view.model().rowCount())
+        color = image.pixelColor(
+            image.width() - 4,
+            int(row_height * (row + 0.5)),
+        )
+        combo.hidePopup()
+        APP.processEvents()
         return 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
 
     def _popup_row_lumas(self, window):
@@ -316,20 +351,221 @@ class HistoryFilterPopupThemeTests(unittest.TestCase):
                 self.assertLess(luma, 64)
             _close(window)
 
-    def test_light_mode_popups_keep_system_light_background(self):
+    def test_every_theme_popups_use_their_own_palette(self):
+        """All four themes: popup background and selection are themed."""
+        from app.themes import THEMES
+
+        for name, tokens in THEMES.items():
+            with self.subTest(theme=name):
+                with tempfile.TemporaryDirectory() as directory:
+                    window = _make_window(directory)
+                    self._seed(window.database)
+                    window.settings.set_theme(name)
+                    window.apply_theme()
+                    window.navigate("history")
+                    window.show()
+                    APP.processEvents()
+
+                    sheet = window.styleSheet()
+                    self.assertIn("QComboBox QAbstractItemView", sheet)
+                    self.assertIn(
+                        "QComboBox QAbstractItemView::item:hover", sheet
+                    )
+                    self.assertIn(
+                        "QComboBox QAbstractItemView::item:selected", sheet
+                    )
+
+                    # Unselected rows sit on the theme's own surface...
+                    surface = self._token_luma(tokens["surface"])
+                    for luma in self._popup_row_lumas(window):
+                        self.assertAlmostEqual(luma, surface, delta=12)
+
+                    # ...and the selected row on the theme accent.
+                    accent = self._token_luma(tokens["accent"])
+                    for combo in (
+                        window.history_view.range_combo,
+                        window.history_view.task_combo,
+                    ):
+                        self.assertAlmostEqual(
+                            self._selected_row_luma(combo),
+                            accent,
+                            delta=20,
+                        )
+                    _close(window)
+
+
+class MainTimerRingTests(unittest.TestCase):
+    """The main timer card shows the shared circular progress ring.
+
+    Same widget, tones and progress semantics as the floating timer:
+    both rings are driven by the one shared ``Clock`` (SessionEngine's
+    source of truth), so focus/break transitions, pause, resume, skip
+    and completion stay synchronized without a second countdown.
+    """
+
+    def test_ring_exists_inside_the_timer_card(self):
+        from app.ui.progress_ring import ProgressRing
+
         with tempfile.TemporaryDirectory() as directory:
             window = _make_window(directory)
-            self._seed(window.database)
-            window.settings.set_theme("Minimal")
-            window.apply_theme()
-            window.navigate("history")
             window.show()
             APP.processEvents()
-            # Light mode must not be restyled by the Dark-mode fix.
-            self.assertNotIn("QComboBox QAbstractItemView", window.styleSheet())
-            for luma in self._popup_row_lumas(window):
-                self.assertGreater(luma, 200)
+            ring = window.focus_view.ring
+            # Ring present; the timer number (and the session caption,
+            # mirroring the compact window's number + label) live
+            # inside it, so the readout is the ring itself.
+            self.assertIsInstance(ring, ProgressRing)
+            self.assertIs(window.time_label.parentWidget(), ring)
+            self.assertIs(window.session_label.parentWidget(), ring)
+            self.assertGreater(ring.width(), window.time_label.width())
+            self.assertGreater(ring.height(), window.time_label.height())
+            self.assertIs(ring.parentWidget(), window.timer_card)
+            # One shared concept: both windows use the same class...
+            self.assertIs(
+                type(window.floating_timer.ring), type(ring)
+            )
+            # ...bound to the very same clock instance — no duplicate
+            # timer state anywhere.
+            self.assertIs(
+                window.focus_view.ring_progress.clock, window.timer
+            )
+            self.assertIs(
+                window.floating_timer.ring_progress.clock, window.timer
+            )
             _close(window)
+
+    def test_progress_matches_the_shared_timer_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            window = _make_window(directory)
+            ring = window.focus_view.ring
+            self.assertAlmostEqual(ring.progress, 0.0)
+
+            # The Clock updates remaining_seconds, then emits tick.
+            window.timer.remaining_seconds = 750
+            window.timer.tick.emit(750)
+            self.assertAlmostEqual(ring.progress, 0.5)
+            self.assertEqual(window.time_label.text(), "12:30")
+
+            window.timer.remaining_seconds = 0
+            window.timer.tick.emit(0)  # completion fills the ring
+            self.assertAlmostEqual(ring.progress, 1.0)
+
+            window.timer.reset(1500)  # next phase emits its own tick
+            self.assertAlmostEqual(ring.progress, 0.0)
+            self.assertEqual(window.time_label.text(), "25:00")
+            _close(window)
+
+    def test_ring_follows_focus_and_break_phases(self):
+        from app.core.enums import SessionPhase
+
+        with tempfile.TemporaryDirectory() as directory:
+            window = _make_window(directory)
+            ring = window.focus_view.ring
+
+            # Focus progress (the arc shows elapsed / total).
+            window.prepare_focus_session()
+            window.timer.remaining_seconds = 1125
+            window.timer.tick.emit(1125)
+            self.assertAlmostEqual(ring.progress, 0.25)
+
+            # Phase change re-arms the shared clock: ring restarts.
+            window.prepare_break("short")
+            self.assertEqual(window.engine.phase, SessionPhase.SHORT_BREAK)
+            self.assertAlmostEqual(ring.progress, 0.0)
+            self.assertEqual(
+                window.focus_view.session_label.text(), "Short recovery"
+            )
+
+            # Break ticks drive the very same ring.
+            window.timer.remaining_seconds = 60
+            window.timer.tick.emit(60)
+            expected = (
+                (window.timer.total_seconds - 60)
+                / window.timer.total_seconds
+            )
+            self.assertAlmostEqual(ring.progress, expected)
+
+            # Skipping the break prepares focus: ring empty again.
+            window.skip_break()
+            self.assertEqual(window.engine.phase, SessionPhase.FOCUS)
+            self.assertAlmostEqual(ring.progress, 0.0)
+            _close(window)
+
+    def test_pause_and_resume_keep_both_rings_synchronized(self):
+        from PySide6.QtTest import QTest
+
+        with tempfile.TemporaryDirectory() as directory:
+            window = _make_window(directory)
+            try:
+                window.show()
+                window.show_floating_timer()
+                APP.processEvents()
+
+                window.prepare_focus_session()
+                window.task_input.setText("Sync task")
+                window.start_timer()
+                self.assertTrue(window.timer.is_running())
+
+                window.timer.remaining_seconds = 750
+                window.timer.tick.emit(750)
+                APP.processEvents()
+                main = window.focus_view.ring.progress
+                mini = window.floating_timer.ring.progress
+                self.assertAlmostEqual(main, 0.5, delta=0.01)
+                self.assertAlmostEqual(mini, 0.5, delta=0.01)
+                self.assertAlmostEqual(main, mini, delta=0.01)
+
+                # Pause: both rings freeze on the same exact value.
+                window.pause_timer()
+                QTest.qWait(120)
+                frozen_main = window.focus_view.ring.progress
+                frozen_mini = window.floating_timer.ring.progress
+                self.assertAlmostEqual(frozen_main, frozen_mini, delta=1e-9)
+                self.assertAlmostEqual(frozen_main, 0.5, delta=1e-9)
+                QTest.qWait(150)
+                self.assertEqual(window.focus_view.ring.progress, frozen_main)
+                self.assertEqual(
+                    window.floating_timer.ring.progress, frozen_mini
+                )
+
+                # Resume: both continue forward from that same point.
+                window.start_timer()
+                self.assertTrue(window.timer.is_running())
+                # The next real tick drives BOTH rings — each view's
+                # binding listens to the same clock signal, whether or
+                # not the window is currently visible.
+                window.timer.remaining_seconds = 749
+                window.timer.tick.emit(749)
+                APP.processEvents()
+                resumed_main = window.focus_view.ring.progress
+                resumed_mini = window.floating_timer.ring.progress
+                self.assertGreater(resumed_main, frozen_main)
+                self.assertGreater(resumed_mini, frozen_mini)
+                self.assertAlmostEqual(resumed_main, resumed_mini, delta=1e-6)
+            finally:
+                _close(window)
+
+    def test_ring_colours_derive_from_every_theme(self):
+        from app.services import theme_service
+        from app.themes import THEMES
+
+        for name, tokens in THEMES.items():
+            with self.subTest(theme=name):
+                with tempfile.TemporaryDirectory() as directory:
+                    window = _make_window(directory)
+                    window.settings.set_theme(name)
+                    window.apply_theme()
+                    track, arc = theme_service.ring_palette(tokens["surface"])
+                    # Both rings share the same theme-derived tones.
+                    self.assertEqual(window.focus_view.ring.track_color, track)
+                    self.assertEqual(window.focus_view.ring.arc_color, arc)
+                    self.assertEqual(
+                        window.floating_timer.ring.track_color, track
+                    )
+                    self.assertEqual(
+                        window.floating_timer.ring.arc_color, arc
+                    )
+                    _close(window)
 
 
 class GoalsStatsViewTests(unittest.TestCase):
