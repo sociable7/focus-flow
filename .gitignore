@@ -40,3 +40,11 @@ dist/
 # AI agent local artifacts
 .opencode/
 .opencode-cache/
+
+# AI agent instruction / config files
+AGENTS.md
+opencode.json
+CLAUDE.md
+CURSOR.md
+GEMINI.md
+.github/copilot-instructions.md
