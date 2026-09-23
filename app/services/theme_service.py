@@ -206,11 +206,45 @@ def build_main_window_stylesheet(resolved):
             """
 
 
+def _is_dark_surface(surface):
+    """True when a ``#RRGGBB`` surface token is visually dark.
+
+    Only dark themes need an explicit combo-popup background; light
+    themes already render the popup with the correct system light
+    palette, so styling them would alter Light mode.
+    """
+    try:
+        red = int(surface[1:3], 16)
+        green = int(surface[3:5], 16)
+        blue = int(surface[5:7], 16)
+    except (TypeError, ValueError):
+        return False
+    return 0.299 * red + 0.587 * green + 0.114 * blue < 128
+
+
 def build_shell_stylesheet(resolved):
     """Sidebar, pages, cards, tables, inputs and completion banner."""
     theme = resolved["tokens"]
     background = resolved["background"]
     accent = resolved["accent"]
+    # Combo dropdown lists (History's "All time" / "All tasks" filters)
+    # have no themed background of their own: without a rule they keep
+    # Qt's system light palette while inheriting the theme's light text,
+    # which is unreadable in Dark mode. Light themes are left untouched
+    # so their popup keeps its existing appearance byte for byte; the
+    # values below mirror the Settings dialog's popup rule.
+    combo_popup = ""
+    if _is_dark_surface(theme["surface"]):
+        combo_popup = f"""
+            QComboBox QAbstractItemView {{
+                background: {theme["surface"]};
+                color: {theme["text"]};
+                selection-background-color:
+                    {accent};
+                selection-color:
+                    {theme["button_text"]};
+            }}
+"""
     return f"""
             QFrame#sideBar {{
                 background: {theme["surface"]};
@@ -347,7 +381,7 @@ def build_shell_stylesheet(resolved):
                 padding: 7px 10px;
                 min-height: 20px;
             }}
-
+{combo_popup}
             QTableWidget#dataTable {{
                 background: {theme["surface"]};
                 border: 1px solid {theme["border"]};

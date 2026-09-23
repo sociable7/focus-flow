@@ -266,6 +266,72 @@ class HistoryViewTests(unittest.TestCase):
             _close(window)
 
 
+class HistoryFilterPopupThemeTests(unittest.TestCase):
+    """Dark-mode regression: the History filter dropdowns must be themed.
+
+    The "All time" / "All tasks" popup lists previously kept Qt's
+    system light background while inheriting the theme's light text,
+    which made them unreadable in Dark mode.
+    """
+
+    def _seed(self, database):
+        now = datetime.now().isoformat(timespec="seconds")
+        database.add_session("Write tests", now, 1500)
+        database.add_session("Review code", now, 600)
+
+    def _row_background_luma(self, combo, row=1):
+        """Luma of an unselected popup row background (0 dark … 255 light)."""
+        view = combo.view()
+        image = view.grab().toImage()
+        row_height = image.height() / max(1, view.model().rowCount())
+        # Right edge of the row: always background, never the item text.
+        color = image.pixelColor(
+            image.width() - 2,
+            int(row_height * (row + 0.5)),
+        )
+        return 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
+
+    def _popup_row_lumas(self, window):
+        lumas = []
+        for combo in (window.history_view.range_combo,
+                      window.history_view.task_combo):
+            combo.showPopup()
+            APP.processEvents()
+            lumas.append(self._row_background_luma(combo))
+            combo.hidePopup()
+            APP.processEvents()
+        return lumas
+
+    def test_dark_mode_popups_use_dark_background(self):
+        with tempfile.TemporaryDirectory() as directory:
+            window = _make_window(directory)
+            self._seed(window.database)
+            window.settings.set_theme("Midnight")
+            window.apply_theme()
+            window.navigate("history")
+            window.show()
+            APP.processEvents()
+            self.assertIn("QComboBox QAbstractItemView", window.styleSheet())
+            for luma in self._popup_row_lumas(window):
+                self.assertLess(luma, 64)
+            _close(window)
+
+    def test_light_mode_popups_keep_system_light_background(self):
+        with tempfile.TemporaryDirectory() as directory:
+            window = _make_window(directory)
+            self._seed(window.database)
+            window.settings.set_theme("Minimal")
+            window.apply_theme()
+            window.navigate("history")
+            window.show()
+            APP.processEvents()
+            # Light mode must not be restyled by the Dark-mode fix.
+            self.assertNotIn("QComboBox QAbstractItemView", window.styleSheet())
+            for luma in self._popup_row_lumas(window):
+                self.assertGreater(luma, 200)
+            _close(window)
+
+
 class GoalsStatsViewTests(unittest.TestCase):
     def test_goals_view_saves_through_service(self):
         with tempfile.TemporaryDirectory() as directory:
